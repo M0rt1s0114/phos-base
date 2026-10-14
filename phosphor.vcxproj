@@ -1,0 +1,159 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{7E4A1C62-2B5D-4E7A-9C31-5D0F2A8B6E14}</ProjectGuid>
+    <RootNamespace>Phosphor</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v142</PlatformToolset>
+    <UseOfMfc>false</UseOfMfc>
+    <UseOfAtl>false</UseOfAtl>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v142</PlatformToolset>
+    <UseOfMfc>false</UseOfMfc>
+    <UseOfAtl>false</UseOfAtl>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)build\$(Platform)\</OutDir>
+    <IntDir>$(ProjectDir)build\obj\$(Platform)\</IntDir>
+    <!-- The product is phos.exe. The project file keeps the PECMD name
+         because the source tree it was split out of is still called that; only
+         the artifact matters to a boot entry point. -->
+    <TargetName>phos</TargetName>
+    <LinkIncremental>false</LinkIncremental>
+    <GenerateManifest>false</GenerateManifest>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- Static CRT on purpose: WinPE has no vcruntime140 / UCRT. -->
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <!-- /EHsc: the Phosphor front end uses exceptions for its non local exits
+           (uncaught error, return). Without it MSVC warns C4530 and does not
+           unwind, which would turn a script error into a crashed boot. -->
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <RegisterOutput>false</RegisterOutput>
+      <SubSystem>Windows</SubSystem>
+      <TargetMachine>MachineX86</TargetMachine>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <SetChecksum>false</SetChecksum>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <RegisterOutput>false</RegisterOutput>
+      <SubSystem>Windows</SubSystem>
+      <TargetMachine>MachineX64</TargetMachine>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <SetChecksum>false</SetChecksum>
+    </Link>
+    <!-- The resource compiler is not the C++ compiler and does not define
+         _M_X64, so identity.h took the x86 branch and the x64 binary shipped a
+         version resource saying "X86U" and a manifest claiming
+         processorArchitecture='x86'. Say it here. -->
+    <ResourceCompile>
+      <PreprocessorDefinitions>_M_X64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <!-- The area files are built as one translation unit. -->
+    <ClCompile Include="src\app\unity.cpp" />
+    <ClCompile Include="src\core\digest.cpp" />
+    <ClCompile Include="src\core\disk.cpp" />
+    <ClCompile Include="src\core\encoding.cpp" />
+    <ClCompile Include="src\core\memory.cpp" />
+    <ClCompile Include="src\core\strutil.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Chunks pulled in by unity.cpp, listed so the IDE shows them. -->
+    <ClInclude Include="src\app\prelude.cpp" />
+    <ClInclude Include="src\app\main.cpp" />
+    <ClInclude Include="src\app\selfcheck.cpp" />
+    <ClInclude Include="src\commands\dialog.cpp" />
+    <ClInclude Include="src\commands\fs.cpp" />
+    <ClInclude Include="src\commands\strs.cpp" />
+    <ClInclude Include="src\commands\files.cpp" />
+    <ClInclude Include="src\commands\encode.cpp" />
+    <ClInclude Include="src\commands\datetime.cpp" />
+    <ClInclude Include="src\engine\condition.cpp" />
+    <ClInclude Include="src\engine\dispatch.cpp" />
+    <ClInclude Include="src\engine\script.cpp" />
+    <ClInclude Include="src\engine\variables.cpp" />
+    <ClInclude Include="src\platform\display.cpp" />
+    <ClInclude Include="src\platform\fileops.cpp" />
+    <ClInclude Include="src\platform\misc.cpp" />
+    <ClInclude Include="src\platform\process.cpp" />
+    <ClInclude Include="src\platform\registry.cpp" />
+    <ClInclude Include="src\platform\tray.cpp" />
+    <ClInclude Include="src\platform\volume.cpp" />
+    <ClInclude Include="src\platform\window.cpp" />
+    <ClInclude Include="src\lang\runtime.h" />
+    <ClInclude Include="src\lang\lexer.cpp" />
+    <ClInclude Include="src\lang\parser.cpp" />
+    <ClInclude Include="src\lang\interp.cpp" />
+    <ClInclude Include="src\lang\host.cpp" />
+    <ClInclude Include="src\lang\run.cpp" />
+    <ClInclude Include="src\core\digest.h" />
+    <ClInclude Include="src\core\disk.h" />
+    <ClInclude Include="src\core\encoding.h" />
+    <ClInclude Include="src\core\memory.h" />
+    <ClInclude Include="src\core\strutil.h" />
+    <ClInclude Include="src\app\identity.h" />
+    <ClInclude Include="src\app\resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\app\app.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="src\app\icons\main.ico" />
+    <Image Include="src\app\icons\tray.ico" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

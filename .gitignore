@@ -1,0 +1,23 @@
+# Build output
+build/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.res
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.aps
+*.ncb
+*.sdf
+*.opensdf
+
+# Misc
+*.log
+*.tmp
+Thumbs.db
+desktop.ini

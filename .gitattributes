@@ -1,0 +1,15 @@
+# Text files: normalise to LF in the repository.
+* text=auto eol=lf
+
+# Windows project files and scripts want CRLF on checkout.
+*.sln             text eol=crlf
+*.vcxproj         text eol=crlf
+*.vcxproj.filters text eol=crlf
+*.rc              text eol=crlf
+*.cmd             text eol=crlf
+*.bat             text eol=crlf
+*.ps1             text eol=crlf
+
+# Binary
+*.ico binary
+*.png binary
