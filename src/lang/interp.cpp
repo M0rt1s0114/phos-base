@@ -12,6 +12,10 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////
 namespace Lang
 {
+	// The most negative 64-bit value. Spelled here rather than taken from
+	// <limits.h>, which this tree does not include.
+	const long long c_i64Min = (-9223372036854775807LL - 1LL);
+
 	Value CopyValue(const Value& v)
 	{
 		Value out(v);
@@ -156,6 +160,19 @@ namespace Lang
 				throw Error(0x80070057, tzBuf, line);
 			}
 
+			// The ceiling is what turns runaway recursion into a script error
+			// instead of a stack the process never comes back from.
+			if (in.depth >= in.depthLimit)
+			{
+				throw Error(0x8000FFFF, L"call depth limit reached (runaway recursion?)", line);
+			}
+			struct DepthGuard
+			{
+				Interp& in;
+				explicit DepthGuard(Interp& target) : in(target) { in.depth++; }
+				~DepthGuard() { in.depth--; }
+			} guard(in);
+
 			// Arguments are copied into the callee, so a list passed in cannot be
 			// written through from the other side.
 			for (size_t i = 0; i < fn->params.size(); i++)
@@ -254,22 +271,30 @@ namespace Lang
 				r.kind = VK_INT;
 				switch (e->op)
 				{
-				case TK_PLUS:  r.i = a.i + b.i; break;
-				case TK_MINUS: r.i = a.i - b.i; break;
-				case TK_STAR:  r.i = a.i * b.i; break;
+				// The arithmetic wraps, which is what the language says it
+				// does. Signed overflow is undefined in C++, so the work is
+				// done in the unsigned type and cast back: that is exactly
+				// two's-complement wraparound, defined, instead of a value the
+				// optimiser is allowed to invent.
+				case TK_PLUS:  r.i = (long long) ((unsigned long long) a.i + (unsigned long long) b.i); break;
+				case TK_MINUS: r.i = (long long) ((unsigned long long) a.i - (unsigned long long) b.i); break;
+				case TK_STAR:  r.i = (long long) ((unsigned long long) a.i * (unsigned long long) b.i); break;
 				case TK_SLASH:
 					if (b.i == 0)
 					{
 						throw Error(0x80070057, L"division by zero", e->line);
 					}
-					r.i = a.i / b.i;
+					// The one division that traps in hardware rather than
+					// answering: the result is not representable. Wrapping, as
+					// the operators above do, gives the most negative value.
+					r.i = ((a.i == c_i64Min) && (b.i == -1)) ? c_i64Min : (a.i / b.i);
 					break;
 				case TK_PERCENT:
 					if (b.i == 0)
 					{
 						throw Error(0x80070057, L"division by zero", e->line);
 					}
-					r.i = a.i % b.i;
+					r.i = ((a.i == c_i64Min) && (b.i == -1)) ? 0 : (a.i % b.i);
 					break;
 				default:
 					throw Error(0x80070057, L"unsupported operator", e->line);
@@ -416,7 +441,11 @@ namespace Lang
 					{
 						r.kind = VK_BOOL; r.b = !Truthy(a); return r;
 					}
-					r.kind = VK_INT; r.i = -AsInt(a, e->line, L"unary '-'"); return r;
+					// Same wraparound rule as the arithmetic operators, so
+					// negating the most negative value is defined too.
+					r.kind = VK_INT;
+					r.i = (long long) (0ULL - (unsigned long long) AsInt(a, e->line, L"unary '-'"));
+					return r;
 				}
 			case EX_BINARY:
 				return EvalBinary(in, e, env);

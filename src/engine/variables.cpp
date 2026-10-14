@@ -267,8 +267,6 @@ namespace PeVar
 						(!UStrCmpNI(pName, TEXT("RANDOM"), 6)))
 					{
 						TCHAR tzRandom[32];
-						// UStrPrint is wsprintf, which does not do 64-bit
-						// formats; the CRT's printf does.
 						_snwprintf_s(tzRandom, _NumOf(tzRandom), _TRUNCATE,
 							TEXT("%I64u"), NextRandom());
 						out += tzRandom;

@@ -7,6 +7,7 @@
 
 #include <TChar.h>
 #include <StdIO.h>
+#include <StdArg.h>
 #include <StdLib.h>
 #include <String.h>
 #include <Memory.h>
@@ -111,8 +112,39 @@ inline INT UStrToInt(PCTSTR ptzStr)
 	return (INT) _wtoi(ptzStr);
 }
 
-#define UStrPrint	wsprintf
-#define UStrPrintV	wvsprintf
+// Bounded formatting. wsprintf takes no destination size and writes whatever
+// the format produces, so a call whose text can outgrow its buffer is a stack
+// overflow -- and the alternative, wvsprintf, is the same function again. These
+// take the array itself, truncate instead of running over, and answer with the
+// number of characters that fitted, so a caller that appends at the returned
+// offset stays inside the buffer.
+//
+// Passing a pointer rather than an array is a compile error on purpose: the
+// size cannot be recovered from a pointer, so those few call sites name the
+// size themselves with UStrPrintN.
+template <size_t N>
+inline int UStrPrintTo(TCHAR (&buf)[N], const TCHAR *ptzFmt, ...)
+{
+	va_list args;
+	int n;
+
+	va_start(args, ptzFmt);
+	n = _vsnwprintf_s(buf, N, _TRUNCATE, ptzFmt, args);
+	va_end(args);
+	return (n < 0) ? (int) (N - 1) : n;
+}
+
+template <size_t N>
+inline int UStrPrintVTo(TCHAR (&buf)[N], const TCHAR *ptzFmt, va_list args)
+{
+	int n = _vsnwprintf_s(buf, N, _TRUNCATE, ptzFmt, args);
+
+	return (n < 0) ? (int) (N - 1) : n;
+}
+
+#define UStrPrint(buf, ...)			UStrPrintTo(buf, __VA_ARGS__)
+#define UStrPrintN(buf, n, ...)		_snwprintf_s(buf, (size_t) (n), _TRUNCATE, __VA_ARGS__)
+#define UStrPrintV(buf, fmt, va)	UStrPrintVTo(buf, fmt, va)
 
 // The narrow-string length, for the half of the code that works in bytes.
 inline UINT UAStrLen(PCSTR pszStr)
@@ -253,21 +285,40 @@ inline PVOID UFileLoad(PCTSTR ptzPath, PVOID pvData, PUINT puSize)
 
 	if (hFile)
 	{
-		DWORD dwSize = GetFileSize(hFile, NULL);
-		UINT uFileSize = (dwSize == INVALID_FILE_SIZE) ? 0 : (UINT) dwSize;
-		UINT uWant = ((puSize != NULL) && (*puSize < uFileSize)) ? *puSize : uFileSize;
+		LARGE_INTEGER liSize;
+		UINT uFileSize = 0;
+		UINT uWant;
 
 		if (!pvData)
 		{
+			// GetFileSizeEx, not GetFileSize with a NULL high word: the size
+			// decides the allocation below, so the high half of it cannot be
+			// dropped.
+			if (GetFileSizeEx(hFile, &liSize) && (liSize.QuadPart > 0))
+			{
+				uFileSize = (liSize.QuadPart > (LONGLONG) UINT_MAX) ? UINT_MAX : (UINT) liSize.QuadPart;
+			}
 			pvData = UMemAlloc(uFileSize + 16);
+			uWant = uFileSize;
+		}
+		else
+		{
+			// A caller's buffer is filled to two bytes short of its size, so
+			// the two terminators written below stay inside it.
+			UINT uHave = ((puSize != NULL) && (*puSize >= 2)) ? (*puSize - 2) : 0;
+
+			uWant = (uHave < uFileSize) ? uHave : uFileSize;
 		}
 		if (pvData)
 		{
 			DWORD dwRead = 0;
 
 			ReadFile(hFile, pvData, uWant, &dwRead, NULL);
-			((PBYTE) pvData)[uFileSize] = 0;
-			((PBYTE) pvData)[uFileSize + 1] = 0;
+			// Terminate where the read ended rather than at the file's size:
+			// with a caller's buffer the two are not the same, and using the
+			// file's size wrote past the end of it.
+			((PBYTE) pvData)[dwRead] = 0;
+			((PBYTE) pvData)[dwRead + 1] = 0;
 			if (puSize)
 			{
 				*puSize = (UINT) dwRead;
@@ -303,6 +354,11 @@ inline BOOL UDirCreate(PTSTR ptzDir)
 		}
 		*ptzSep = '\\';
 	}
+	// The walk reports nothing, and it cannot: the first component it stops at
+	// is the drive itself ("X:"), where CreateDirectory's answer means nothing,
+	// and the last component is never visited at all -- this walks the
+	// separators, so what it creates is the parents of ptzDir. A caller that
+	// needs the answer for the directory it asked for uses DirCreate().
 	return TRUE;
 }
 

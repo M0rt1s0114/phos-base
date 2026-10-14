@@ -5,7 +5,10 @@
 // chain can be written in one language instead of a command file plus cmd.
 //
 // Two things are on purpose:
-//   * values are copied on assignment, so there is no aliasing and no cycles
+//   * values are copied on assignment, so there is no aliasing between the
+//     caller and the callee. A function value is the exception: it holds the
+//     scope it was defined in, and a scope that holds one of its own functions
+//     is a reference cycle, so that scope is never freed
 //   * a host call that fails stops the script unless it is written inside a
 //     try block
 //
@@ -158,6 +161,12 @@ namespace Lang
 		std::shared_ptr<Env> env;
 		UINT64               steps;
 		UINT64               stepLimit;
+		// Live call depth and its ceiling. Every call frame is a C++ frame with
+		// a handful of Values on it, so a runaway recursion runs the real stack
+		// out long before the step limit notices; the ceiling turns that into
+		// an error the script can see.
+		int                  depth;
+		int                  depthLimit;
 		BOOL                 dryRun;
 		String               scriptDir;		// directory of the running script, no trailing slash
 		String               scriptPath;
@@ -171,7 +180,7 @@ namespace Lang
 		// own channel when the task is awaited.
 		std::map<long long, String> procLogs;
 
-		Interp() : steps(0), stepLimit(20000000ULL), dryRun(FALSE) {}
+		Interp() : steps(0), stepLimit(20000000ULL), depth(0), depthLimit(200), dryRun(FALSE) {}
 	};
 
 	// --- the pieces -----------------------------------------------------------------

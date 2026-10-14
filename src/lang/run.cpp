@@ -19,7 +19,11 @@ namespace Lang
 		String DecodeSource(const BYTE *pb, UINT uLen, UINT uBody)
 		{
 			const char *pc = (const char *) (pb + uBody);
-			int nChars = MultiByteToWideChar(CP_UTF8, 0, pc, (INT) (uLen - uBody), NULL, 0);
+			// MB_ERR_INVALID_CHARS is what makes the fallback below reachable:
+			// without it an ill-formed sequence is replaced with U+FFFD and the
+			// conversion "succeeds", so a GBK script would silently turn into
+			// replacement characters instead of being read as ANSI.
+			int nChars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, pc, (INT) (uLen - uBody), NULL, 0);
 			UINT uCode = CP_UTF8;
 			String out;
 
@@ -40,9 +44,14 @@ namespace Lang
 			return out;
 		}
 
-		UINT MarkerBodyOffset(const BYTE *pb, UINT uLen)
+		// Where the body starts, and which line that is. The shebang line and
+		// the blank lines under it are not part of the program, but the line
+		// numbers the lexer reports have to be the ones an editor shows, so the
+		// count of skipped line breaks comes back with the offset.
+		UINT MarkerBodyOffset(const BYTE *pb, UINT uLen, int *pFirstLine)
 		{
 			UINT p = 0;
+			int line = 1;
 
 			if ((uLen >= 3) && (pb[0] == 0xEF) && (pb[1] == 0xBB) && (pb[2] == 0xBF))
 			{
@@ -54,9 +63,33 @@ namespace Lang
 			}
 			while ((p < uLen) && ((pb[p] == L'\r') || (pb[p] == L'\n')))
 			{
+				if ((pb[p] == L'\r') && ((p + 1) < uLen) && (pb[p + 1] == L'\n'))
+				{
+					p++;
+				}
+				line++;
 				p++;
 			}
+			if (pFirstLine)
+			{
+				*pFirstLine = line;
+			}
 			return p;
+		}
+
+		// The whole script, ready for the lexer: the marker is gone and the
+		// lines it took are back as leading newlines, which the lexer counts and
+		// the parser discards.
+		String DecodeScript(const BYTE *pb, UINT uLen)
+		{
+			int firstLine = 1;
+			String src = DecodeSource(pb, uLen, MarkerBodyOffset(pb, uLen, &firstLine));
+
+			if (firstLine > 1)
+			{
+				src = String((size_t) (firstLine - 1), L'\n') + src;
+			}
+			return src;
 		}
 
 		bool ParseAll(const String& src, std::vector<StmtPtr>& program, String& err)
@@ -104,7 +137,7 @@ namespace Lang
 
 	HRESULT RunBytes(const BYTE *pb, UINT uLen, PCTSTR ptzPath)
 	{
-		String src = DecodeSource(pb, uLen, MarkerBodyOffset(pb, uLen));
+		String src = DecodeScript(pb, uLen);
 		std::vector<StmtPtr> program;
 		String err;
 		Interp in;
@@ -154,6 +187,23 @@ namespace Lang
 		catch (ReturnSignal&)
 		{
 			// A top level return is just the end of the script.
+		}
+		catch (...)
+		{
+			// Anything the interpreter does not model by itself: an allocation
+			// failure, an exception out of the standard library. Left alone it
+			// reaches terminate(), which in a PE is the black screen with no
+			// message at all. Note that this is not a catch-all for the machine:
+			// under /EHsc a trap or an access violation is not a C++ exception
+			// and still ends the process.
+			if (g_hXLog)
+			{
+				TCHAR tzBuf[MAX_STR];
+
+				UStrCopy(tzBuf, TEXT("phos: the interpreter stopped with an unmapped error"));
+				SetLogs(tzBuf, E_FAIL);
+			}
+			hr = E_FAIL;
 		}
 
 		// Processes nobody awaited: closing the handle does not touch the
@@ -362,7 +412,7 @@ namespace Lang
 			return false;
 		}
 		{
-			String src = DecodeSource(pb, uSize, MarkerBodyOffset(pb, uSize));
+			String src = DecodeScript(pb, uSize);
 			ok = CheckSource(src, errOut);
 		}
 		UMemFree(pb);

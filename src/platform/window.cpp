@@ -726,7 +726,7 @@ VOID DesktopNamesText(PTSTR ptzOut, UINT uOut)
 		GetWindowThreadProcessId(hShell, &dwShellPid);
 	}
 
-	UStrPrint(ptzOut, TEXT("input=%s thread=%s winsta=%s shell=%s/%u explorer=%u"),
+	UStrPrintN(ptzOut, uOut, TEXT("input=%s thread=%s winsta=%s shell=%s/%u explorer=%u"),
 		tzInput, tzThread, tzWinSta, tzShellCls, (UINT) dwShellPid, (UINT) dwExplorerPid);
 	if (hInput)
 	{

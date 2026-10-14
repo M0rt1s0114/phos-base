@@ -311,8 +311,13 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax)
 		{
 			i = (i / sizeof(TCHAR)) - 1;
 		}
-		i += UStrPrint(tzStr + i, TEXT("%s %d %d"), ptzPath, uMin, uMax);
-		tzStr[++i] = 0;
+		if ((i >= 0) && (i < (INT) _NumOf(tzStr) - 1))
+		{
+			UStrPrintN(tzStr + i, (size_t) (_NumOf(tzStr) - (size_t) i),
+				TEXT("%s %d %d"), ptzPath, uMin, uMax);
+			i += (INT) UStrLen(tzStr + i);
+			tzStr[++i] = 0;
+		}
 		SHSetValue(HKEY_LOCAL_MACHINE, REG_MemMgr, REG_PageFile, REG_MULTI_SZ, tzStr, i * sizeof(TCHAR));
 	}
 	return hResult;

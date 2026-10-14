@@ -294,7 +294,8 @@ HRESULT SetEnvironment(PTSTR ptzEnv, BOOL bSystem = FALSE,BOOL bInit = FALSE)
 		{
 			for (UINT i = 0; i < _NumOf(c_sMacro); i++)
 			{
-				PTSTR ptzPath = tzStr + UStrPrint(tzStr, TEXT("%s="), c_sMacro[i].ptzMacro);
+				UStrPrint(tzStr, TEXT("%s="), c_sMacro[i].ptzMacro);
+				PTSTR ptzPath = tzStr + UStrLen(tzStr);
 
 				if (!SHGetSpecialFolderPath(NULL, ptzPath, c_sMacro[i].iFolder, TRUE))
 				{

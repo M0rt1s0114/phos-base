@@ -236,7 +236,8 @@ namespace Lang
 			{
 				Token t;
 				String digits;
-				long long value = 0;
+				unsigned long long value = 0;
+				bool bOverflow = false;
 
 				t.kind = TK_INT;
 				t.line = line;
@@ -247,7 +248,13 @@ namespace Lang
 						(IsDigit(src[i]) || ((src[i] >= L'a') && (src[i] <= L'f')) || ((src[i] >= L'A') && (src[i] <= L'F'))))
 					{
 						wchar_t d = src[i];
-						value = value * 16 + ((d <= L'9') ? (d - L'0') : ((d | 0x20) - L'a' + 10));
+						unsigned digit = (d <= L'9') ? (unsigned) (d - L'0') : (unsigned) ((d | 0x20) - L'a' + 10);
+
+						if (value > (0x7FFFFFFFFFFFFFFFULL - digit) / 16)
+						{
+							bOverflow = true;
+						}
+						value = value * 16 + digit;
 						digits += d;
 						i++;
 					}
@@ -256,12 +263,25 @@ namespace Lang
 				{
 					while ((i < src.size()) && IsDigit(src[i]))
 					{
-						value = value * 10 + (src[i] - L'0');
+						unsigned digit = (unsigned) (src[i] - L'0');
+
+						if (value > (0x7FFFFFFFFFFFFFFFULL - digit) / 10)
+						{
+							bOverflow = true;
+						}
+						value = value * 10 + digit;
 						digits += src[i];
 						i++;
 					}
 				}
-				t.i = value;
+				// A literal that does not fit is refused instead of wrapping:
+				// the value would otherwise be wrong with nothing to show it.
+				if (bOverflow)
+				{
+					err = L"integer literal is out of range: " + digits;
+					return toks;
+				}
+				t.i = (long long) value;
 				t.text = digits;
 				toks.push_back(t);
 				continue;

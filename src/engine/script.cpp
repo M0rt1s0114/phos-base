@@ -688,7 +688,12 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 	if (ptzCmd[0])
 	{
 		TCHAR tzCmd[MAX_PATH];
-		UStrPrint(tzCmd + GetModuleFileName(NULL, tzCmd, MAX_PATH), TEXT(" LOAD %s"), ptzCmd);
+		DWORD uSelfLen = GetModuleFileName(NULL, tzCmd, _NumOf(tzCmd));
+		if (uSelfLen < _NumOf(tzCmd) - 1)
+		{
+			UStrPrintN(tzCmd + uSelfLen, (size_t) (_NumOf(tzCmd) - uSelfLen),
+				TEXT(" LOAD %s"), ptzCmd);
+		}
 		Exec(g_ctx, tzCmd);		
 	}
 

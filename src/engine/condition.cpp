@@ -417,7 +417,7 @@ VOID SetLogs(PTSTR tzCmdStr,HRESULT eResult)
 	if (uLen == 0)
 	{
 		PTSTR p = tzMsg + LoadString(g_hInst, IDS_CmdErr, tzMsg, MAX_NAME);
-		p += UStrPrint(p, TEXT("%08X"), hResult);
+		UStrPrintN(p, (size_t) (_NumOf(tzMsg) - (size_t) (p - tzMsg)), TEXT("%08X"), hResult);
 	}
 	else
 	{

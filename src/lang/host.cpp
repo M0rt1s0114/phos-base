@@ -1,8 +1,12 @@
 ﻿//////////////////////////////////////////////////////////////////////////////////////////////////
 // Phosphor host functions.
 //
-// Almost every verb here builds a command line and hands it to Command(), so a
-// script and a command file end up at the same implementation.
+// A verb and the text command with the same job reach the same implementation
+// through the capability layer below, not through a command line: a script
+// calls FsDelete() where a command file calls FILE, and the two meet inside
+// platform/. The one exception is hotkey.bind, whose command stays text because
+// the hotkey handler that runs it later has no interpreter frame to call back
+// into.
 //
 // The exceptions are the things no text command covers: file attributes,
 // directory listing, environment reads and the path record. Those talk to
@@ -181,7 +185,8 @@ namespace Lang
 		// still moving and a missing entry must not silently count as read only.
 		bool IsWriteVerb(const String& name)
 		{
-			return (name == L"proc.run") || (name == L"proc.spawn") ||
+			return (name == L"env.set") || (name == L"proc.run") ||
+				(name == L"proc.spawn") ||
 				(name == L"disk.letter") ||
 				(name == L"disk.eject") ||
 				(name == L"disk.mount_volumes") ||
