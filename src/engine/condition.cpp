@@ -118,7 +118,12 @@ HRESULT IFEx_Or_Find(PTSTR ptzCmd,bool GetFree)
 		}
 		else
 		{
-			TCHAR KeyWord[3];
+			// Four, not three: "%.3s" writes three characters and the
+			// terminator. The array was three wide, so the terminator went one
+			// past the end -- harmless while the bounded printer truncates
+			// instead, but only because it then wrote two characters where the
+			// comparisons below read three, which silently broke them.
+			TCHAR KeyWord[4];
 			UStrPrint(KeyWord, TEXT("%.3s"), ptzCmd); // the keyword: MEM, KEY or a drive 
 			if ((ptzCmd[3] == '>') || (ptzCmd[3] == '<') || (ptzCmd[3] == '=') /*|| (ptzCmd[3] == '!')*/)
 			{
