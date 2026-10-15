@@ -7,10 +7,11 @@
 # executables and nothing else: Windows PE wants a single statically linked
 # file dropped into System32, not an installer and not a zip to unpack.
 #
-# The action versions below are the ones that run on Node 24; the runners are
-# retiring Node 20. Publishing shells out to the gh CLI that is already on the
-# image instead of using a release action, so there is no third runtime here
-# that can age out from under the workflow.
+# The runners are retiring Node 20. Every action below is pinned to the lowest
+# major that declares Node 24 -- checkout v5, upload-artifact v6,
+# download-artifact v7 -- so nothing here runs on a runtime that is on its way
+# out. Publishing shells out to the gh CLI that is already on the image instead
+# of using a release action, so there is no second runtime to age out.
 
 name: release
 
@@ -72,7 +73,7 @@ jobs:
           New-Item -ItemType Directory -Force out | Out-Null
           Copy-Item $built "out/phos-${{ matrix.platform }}.exe"
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: phos-${{ matrix.platform }}
           path: out/phos-${{ matrix.platform }}.exe
@@ -85,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
