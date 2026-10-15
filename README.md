@@ -1,4 +1,4 @@
-# This project is still being debugged and may still have defects
+# This project is still being debugged and may still have defects; if you are not planning to debug it, please do not use it in a production environment yet
 
 # Project Phosphor Base
 
