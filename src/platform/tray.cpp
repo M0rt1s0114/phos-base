@@ -656,18 +656,20 @@ HRESULT Hotk(CoreContext& ctx, PTSTR ptzHotk)
 HRESULT Md5c(CoreContext& ctx, PTSTR ptzCmd)
 {	
 	PTSTR pMD5Code = UStrToMD5(ptzCmd);
-	TCHAR ptzCaption[MD5Str_Len];
-	BOOL hResult = SetClipboardText(pMD5Code);
-	if (hResult)
+	// MAX_NAME, not the digest length: the caption is a resource string, and
+	// LoadString was being told it had room for eighty characters.
+	TCHAR ptzCaption[MAX_NAME];
+	HRESULT hrClip = SetClipboardText(pMD5Code);
+	if (SUCCEEDED(hrClip))
 	{
-		LoadString(g_hInst,IDS_SaveToClipboard,ptzCaption, MAX_NAME);
+		LoadString(g_hInst, IDS_SaveToClipboard, ptzCaption, _NumOf(ptzCaption));
 	}
 	else
 	{
-		LoadString(g_hInst,IDS_MD5String,ptzCaption, MAX_NAME);
+		LoadString(g_hInst, IDS_MD5String, ptzCaption, _NumOf(ptzCaption));
 	}
 	MessageBox(NULL,pMD5Code,ptzCaption, MB_OK);
-	return hResult?S_OK:S_FALSE;
+	return hrClip;
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
 

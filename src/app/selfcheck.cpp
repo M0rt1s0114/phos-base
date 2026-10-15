@@ -65,7 +65,7 @@ HRESULT SetClipboardText(PTSTR ptzText)
 		}
 	}
 	CloseClipboard();
-	return bResult;
+	return bResult ? S_OK : S_FALSE;
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
 

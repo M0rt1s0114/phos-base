@@ -65,7 +65,7 @@ HRESULT SetSystemShell(PCTSTR ptzShell)
 		PESHELL,
 		REG_SZ,
 		bSetShell ? (void *) ptzShell : NULL,
-		bSetShell ? UStrLen((PTSTR) ptzShell) * sizeof(TCHAR) : 0) != ERROR_SUCCESS);
+		bSetShell ? UStrLen((PTSTR) ptzShell) * sizeof(TCHAR) : 0) == ERROR_SUCCESS) ? S_OK : S_FALSE;
 }
 
 HRESULT Shel(CoreContext& ctx, PTSTR ptzCmd)
@@ -132,7 +132,7 @@ HRESULT RegFont(PTSTR tzPath)
 	hFind = FindFirstFile(tzPath, &fd);
 	if (hFind == INVALID_HANDLE_VALUE)
 	{
-		return (!hResult);
+		return (hResult == 0) ? S_FALSE : S_OK;
 	}
 
 	do
@@ -150,7 +150,7 @@ HRESULT RegFont(PTSTR tzPath)
 	FindClose(hFind);
 	SendMessage(HWND_BROADCAST, WM_FONTCHANGE, 0, 0);
 
-	return (!hResult);
+	return (hResult == 0) ? S_FALSE : S_OK;
 }
 //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -263,7 +263,10 @@ HRESULT Numk(CoreContext& ctx, PTSTR ptzCmd)
 	BOOL bWant = (UStrToInt(ptzCmd) != 0);
 	BYTE abKeyState[256];
 
-	GetKeyboardState(abKeyState);
+	if (!GetKeyboardState(abKeyState))
+	{
+		return (HRESULT) GetLastError();
+	}
 	if ((bWant && !(abKeyState[VK_NUMLOCK] & 1)) ||
 		(!bWant && (abKeyState[VK_NUMLOCK] & 1)))
 	{

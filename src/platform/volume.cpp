@@ -232,7 +232,7 @@ HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB)
 			}
 		}
 	}
-	return (!bDone);
+	return bDone ? S_OK : S_FALSE;
 }
 
 // EJEC - push media out. The shapes the text form takes:

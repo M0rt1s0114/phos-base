@@ -643,18 +643,18 @@ namespace Lang
 						}
 						{
 							size_t j = i + 2;
-							int depth = 1;
+							int nNest = 1;
 							size_t start = j;
-							while ((j < raw.size()) && (depth > 0))
+							while ((j < raw.size()) && (nNest > 0))
 							{
 								if (raw[j] == L'{')
 								{
-									depth++;
+									nNest++;
 								}
 								else if (raw[j] == L'}')
 								{
-									depth--;
-									if (depth == 0)
+									nNest--;
+									if (nNest == 0)
 									{
 										break;
 									}

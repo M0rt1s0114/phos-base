@@ -13,6 +13,10 @@
 #include <Memory.h>
 #include <Windows.h>
 #include <ShLwApi.h>
+// The safe-string layer. STRSAFE_NO_DEPRECATE keeps it from redefining the
+// CRT's own names, which this tree still uses through its UStr* wrappers.
+#define STRSAFE_NO_DEPRECATE
+#include <StrSafe.h>
 
 // Windows already defines most of this vocabulary (BOOL, INT, UINT, WCHAR,
 // TCHAR, PTSTR, PCTSTR, PSTR, PWSTR, PCSTR, PCWSTR, HANDLE, VOID, TRUE, FALSE,
@@ -126,24 +130,31 @@ template <size_t N>
 inline int UStrPrintTo(TCHAR (&buf)[N], const TCHAR *ptzFmt, ...)
 {
 	va_list args;
-	int n;
+	HRESULT hr;
 
 	va_start(args, ptzFmt);
-	n = _vsnwprintf_s(buf, N, _TRUNCATE, ptzFmt, args);
+	hr = StringCchVPrintf(buf, N, ptzFmt, args);
 	va_end(args);
-	return (n < 0) ? (int) (N - 1) : n;
+	// StringCchVPrintf terminates the buffer on both paths, so its length is the
+	// answer whichever way it went -- and it carries the SAL annotations that
+	// tell the analyser so, which the CRT's own printf does not.
+	return (int) UStrLen(buf);
 }
 
 template <size_t N>
 inline int UStrPrintVTo(TCHAR (&buf)[N], const TCHAR *ptzFmt, va_list args)
 {
-	int n = _vsnwprintf_s(buf, N, _TRUNCATE, ptzFmt, args);
+	HRESULT hr = StringCchVPrintf(buf, N, ptzFmt, args);
 
-	return (n < 0) ? (int) (N - 1) : n;
+	if (FAILED(hr))
+	{
+		buf[N - 1] = 0;		// the call already terminated it; this is belt and braces
+	}
+	return (int) UStrLen(buf);
 }
 
 #define UStrPrint(buf, ...)			UStrPrintTo(buf, __VA_ARGS__)
-#define UStrPrintN(buf, n, ...)		_snwprintf_s(buf, (size_t) (n), _TRUNCATE, __VA_ARGS__)
+#define UStrPrintN(buf, n, ...)		StringCchPrintf(buf, (size_t) (n), __VA_ARGS__)
 #define UStrPrintV(buf, fmt, va)	UStrPrintVTo(buf, fmt, va)
 
 // The narrow-string length, for the half of the code that works in bytes.
@@ -313,7 +324,10 @@ inline PVOID UFileLoad(PCTSTR ptzPath, PVOID pvData, PUINT puSize)
 		{
 			DWORD dwRead = 0;
 
-			ReadFile(hFile, pvData, uWant, &dwRead, NULL);
+			if (!ReadFile(hFile, pvData, uWant, &dwRead, NULL))
+			{
+				dwRead = 0;		// the terminators below still make it an empty string
+			}
 			// Terminate where the read ended rather than at the file's size:
 			// with a caller's buffer the two are not the same, and using the
 			// file's size wrote past the end of it.

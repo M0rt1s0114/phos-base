@@ -26,7 +26,7 @@ HRESULT Priv(PCTSTR ptzName)
 	}
 	CloseHandle(hToken);
 
-	return bResult;
+	return bResult ? S_OK : S_FALSE;
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -79,7 +79,14 @@ HRESULT Disp(CoreContext& ctx, PTSTR ptzCmd)
 {
 	DEVMODE dmNew,dmOld,dmTmp;
 	HRESULT lResult = S_OK;
-	EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dmOld);
+	// The current mode, or there is nothing to base a partial change on: the
+	// fields the command does not name come from here, and reading them from an
+	// uninitialised stack frame is what /analyze complains about.
+	ZeroMemory(&dmOld, sizeof(dmOld));
+	if (!EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dmOld))
+	{
+		return (HRESULT) GetLastError();
+	}
 	dmTmp = dmOld;
 
 	UStrToUpper(ptzCmd);
@@ -280,14 +287,18 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax)
 	UStrCat(tzDos, tzFile);
 	UStrToWStr(wzPath, tzDos, MAX_PATH);
 
-	sPath.Length = UWStrLen(wzPath) * sizeof(WCHAR);
+	sPath.Length = (USHORT) (UWStrLen(wzPath) * sizeof(WCHAR));
 	sPath.MaximumLength = sPath.Length + sizeof(WCHAR);
 	sPath.Buffer = wzPath;
 
 	ulMin.QuadPart = uMin * cbPerMb;
 	ulMax.QuadPart = uMax * cbPerMb;
 
-	pfn = (PNtCreatePagingFile) GetProcAddress(GetModuleHandle(TEXT("NTDLL")), "NtCreatePagingFile");
+	{
+		HMODULE hNtdll = GetModuleHandle(TEXT("NTDLL"));
+
+		pfn = hNtdll ? (PNtCreatePagingFile) GetProcAddress(hNtdll, "NtCreatePagingFile") : NULL;
+	}
 	if (!pfn)
 	{
 		return E_FAIL;
@@ -314,7 +325,7 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax)
 		if ((i >= 0) && (i < (INT) _NumOf(tzStr) - 1))
 		{
 			UStrPrintN(tzStr + i, (size_t) (_NumOf(tzStr) - (size_t) i),
-				TEXT("%s %d %d"), ptzPath, uMin, uMax);
+				TEXT("%s %d %d"), ptzPath, (int) uMin, (int) uMax);
 			i += (INT) UStrLen(tzStr + i);
 			tzStr[++i] = 0;
 		}

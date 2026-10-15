@@ -416,7 +416,7 @@ namespace Lang
 			{
 				WaitForSingleObject(pi.hProcess, INFINITE);
 			}
-			SetProcessWorkingSetSize(CurrentProcess, -1, -1);
+			SetProcessWorkingSetSize(CurrentProcess, (SIZE_T) -1, (SIZE_T) -1);
 			CloseHandle(pi.hThread);
 			if (phProcess)
 			{
@@ -1028,7 +1028,11 @@ namespace Lang
 		// does not look broken, it produces different Chinese characters.
 		String DecodeFileText(const std::vector<BYTE>& data)
 		{
-			const BYTE *pb = data.empty() ? NULL : &data[0];
+			if (data.empty())
+			{
+				return String();
+			}
+			const BYTE *pb = &data[0];
 			size_t cb = data.size();
 			int cch;
 			UINT uCodePage;
@@ -1717,7 +1721,10 @@ namespace Lang
 			}
 			else
 			{
-				CloseHandle(hProcess);
+				if (hProcess)
+				{
+					CloseHandle(hProcess);
+				}
 			}
 			return MakeProcValue(dwPid);
 		}

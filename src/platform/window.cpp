@@ -3,12 +3,12 @@
 // colour and the font.
 HRESULT OutPutText(HDC hDC)
 {
-	HRESULT hResult;
+	int nDrawn;
 
 	SetBkMode(hDC, TRANSPARENT);
 	SetTextColor(hDC, s_crText);
 	SelectObject(hDC, hfont ? hfont : GetStockObject(DEFAULT_GUI_FONT));
-	hResult = DrawText(hDC, s_tzText, -1, &s_rtText, DT_LEFT | DT_WORDBREAK);
+	nDrawn = DrawText(hDC, s_tzText, -1, &s_rtText, DT_LEFT | DT_WORDBREAK);
 
 	// Without a splash window the text is going somewhere else, and the wait below
 	// has to be released rather than wait for a window that will never paint.
@@ -16,7 +16,7 @@ HRESULT OutPutText(HDC hDC)
 	{
 		tzDrawTextDone = TRUE;
 	}
-	return hResult ? S_OK : S_FALSE;
+	return nDrawn ? S_OK : S_FALSE;
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -63,10 +63,10 @@ void SetFirstTextDone(PTSTR ptzText)
 // let it through.
 void WaitDrawText(void)
 {
-	DWORD timestart_window = GetTickCount();
+	DWORD dwStarted = GetTickCount();
 	MSG msg;
 
-	while ((((GetTickCount() - timestart_window) < 500) && (!tzDrawTextDone)) || (!bRealBoot))
+	while ((((GetTickCount() - dwStarted) < 500) && (!tzDrawTextDone)) || (!bRealBoot))
 	{
 		PeekMessage(&msg,NULL,0,0,PM_REMOVE);
 		DispatchMessage(&msg);
@@ -115,7 +115,7 @@ static void LogoFadeOut(HWND hWnd)
 {
 	for (UINT i = 0; i <= 255; i += 5)
 	{
-		SetLayeredWindowAttributes(hWnd, 0, 255 - i, LWA_ALPHA);
+		SetLayeredWindowAttributes(hWnd, 0, (BYTE) (255 - i), LWA_ALPHA);
 		Sleep(20);
 	}
 }
@@ -268,10 +268,10 @@ void SaveUserTextData(BOOL tzSave)
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-HRESULT FindProc(PCTSTR);
+DWORD FindProc(PCTSTR);
 BOOL ParentProcessIsME(void)
 {
-	HRESULT bResult = TRUE;
+	BOOL bResult = TRUE;
 	TCHAR ParentProcessName[MAX_NAME];
 	TCHAR tzSelf[MAX_PATH];
 	TCHAR tzSelfName[MAX_NAME];

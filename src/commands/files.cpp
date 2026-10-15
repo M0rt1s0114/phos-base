@@ -318,7 +318,7 @@ HRESULT Read(CoreContext& ctx, PTSTR ptzCmd)
 	PTSTR ptzWhich;
 	PTSTR ptzVar;
 	INT iLine;
-	UINT uSize = -1;
+	UINT uSize = (UINT) -1;
 	PBYTE pbFile;
 	PWSTR pwzText;
 	UINT uLines = 1;
@@ -442,13 +442,16 @@ HRESULT Writ(CoreContext& ctx, PTSTR ptzCmd)
 	PTSTR ptzText;
 	INT iLine = 0;
 	INT iMode = WRIT_REPLACE;
-	UINT uSize = -1;
+	UINT uSize = (UINT) -1;
 	PBYTE pbFile = NULL;
 	PWSTR pwzText = NULL;
 	TCHAR tzPath[MAX_PATH];
 	// Line table: where each line starts and ends in the wide text.
-	UINT uStarts[MAX_STR];
-	UINT uEnds[MAX_STR];
+	// On the heap: the two tables together are eight kilobytes, which is half of
+	// what /analyze will accept in one frame, and the line count is bounded by
+	// their size rather than by the stack.
+	std::vector<UINT> uStarts(MAX_STR);
+	std::vector<UINT> uEnds(MAX_STR);
 	UINT uCount = 0;
 	UINT i;
 
@@ -509,7 +512,7 @@ HRESULT Writ(CoreContext& ctx, PTSTR ptzCmd)
 	}
 
 	// Split into lines, without the terminators.
-	for (i = 0; pwzText[i] && (uCount < _NumOf(uStarts)); )
+	for (i = 0; pwzText[i] && (uCount < uStarts.size()); )
 	{
 		UINT uStart = i;
 		while (pwzText[i] && (pwzText[i] != '\r') && (pwzText[i] != '\n'))
@@ -680,7 +683,12 @@ HRESULT Flnk(CoreContext& ctx, PTSTR ptzCmd)
 		// CreateSymbolicLink is Vista and later, and the project is pinned to a
 		// pre-Vista _WIN32_WINNT, so it is looked up rather than linked.
 		typedef BOOLEAN (WINAPI *PCSL)(PCWSTR, PCWSTR, DWORD);
-		PCSL pfCreate = (PCSL) GetProcAddress(GetModuleHandle(TEXT("KERNEL32")), "CreateSymbolicLinkW");
+		PCSL pfCreate;
+		{
+			HMODULE hKernel = GetModuleHandle(TEXT("KERNEL32"));
+
+			pfCreate = hKernel ? (PCSL) GetProcAddress(hKernel, "CreateSymbolicLinkW") : NULL;
+		}
 #ifndef SYMBOLIC_LINK_FLAG_DIRECTORY
 #define SYMBOLIC_LINK_FLAG_DIRECTORY 0x2
 #endif
@@ -707,7 +715,8 @@ HRESULT Dir(CoreContext& ctx, PTSTR ptzCmd)
 	PTSTR ptzVar;
 	PTSTR ptzMask;
 	TCHAR tzMask[MAX_PATH];
-	TCHAR tzOut[MAX_STR * 8];
+	// On the heap, for the same reason as the line tables in Writ.
+	std::vector<TCHAR> tzOut(MAX_STR * 8);
 	WIN32_FIND_DATA fd;
 	HANDLE hFind;
 	UINT uOut = 0;
@@ -755,18 +764,18 @@ HRESULT Dir(CoreContext& ctx, PTSTR ptzCmd)
 			continue;
 		}
 		uLen = UStrLen(fd.cFileName);
-		if (uOut + uLen + 4 >= _NumOf(tzOut))
+		if (uOut + uLen + 4 >= tzOut.size())
 		{
 			break;
 		}
-		UStrCopy(tzOut + uOut, fd.cFileName);
+		UStrCopy(&tzOut[uOut], fd.cFileName);
 		uOut += uLen;
 		tzOut[uOut++] = '\n';
 		tzOut[uOut] = 0;
 	}
 	while (FindNextFile(hFind, &fd));
 	FindClose(hFind);
-	return StoreResult(ptzVar, tzOut) ? S_OK : S_FALSE;
+	return StoreResult(ptzVar, &tzOut[0]) ? S_OK : S_FALSE;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -785,7 +794,6 @@ HRESULT Dir(CoreContext& ctx, PTSTR ptzCmd)
 HRESULT Site(CoreContext& ctx, PTSTR ptzCmd)
 {
 	PTSTR ptzAttrs;
-	PTSTR ptzPath;
 	PTSTR ptzComma;
 	TCHAR tzPath[MAX_PATH];
 	TCHAR tzAttrs[MAX_NAME];

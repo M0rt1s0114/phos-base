@@ -515,7 +515,7 @@ HRESULT LoadFile(PTSTR ptzPath)
 	TCHAR tzPath[MAX_PATH];
 	UStrCopyN(tzPath, ptzPath, _NumOf(tzPath));
 
-	UINT uSize = -1;
+	UINT uSize = (UINT) -1;
 	PBYTE pbFile = (PBYTE) UFileLoad(tzPath, NULL, &uSize);
 	if (pbFile == NULL)
 	{
@@ -564,8 +564,6 @@ HRESULT LoadFile(PTSTR ptzPath)
 
 	PTSTR pCurFileStart = p; // start of the file
 	pFileStart = pCurFileStart;
-	BOOL IsSUB = FALSE;      // inside a sub body
-
 		InsnList script;
 	InsnList *prevScript = g_pScript;
 	if (ScriptParse((PTSTR) pbFile, &script) != S_OK)
@@ -701,7 +699,7 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 
 	UThreadClose(UThreadCreate((UPROC) MainThread, NULL));
 
-	SetProcessWorkingSetSize(CurrentProcess,-1,-1);
+	SetProcessWorkingSetSize(CurrentProcess, (SIZE_T) -1, (SIZE_T) -1);
 
 	MSG msg;
 	while (GetMessage(&msg, NULL, 0, 0))

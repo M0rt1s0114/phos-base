@@ -57,9 +57,29 @@
            unwind, which would turn a script error into a crashed boot. -->
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <!-- /GS on. It was off in the first release, which is why a family of
+           overruns in the command parser showed up as mysterious behaviour
+           instead of crashing where they happened. -->
+      <BufferSecurityCheck>true</BufferSecurityCheck>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
+      <!-- C4100 is the unreferenced-parameter note, and the text handlers keep
+           their fixed (ctx, command) signature whether they use both or not;
+           C4706 is the deliberate "while ((p = find(...)))" idiom. Everything
+           else /W4 says is worth reading. -->
+      <DisableSpecificWarnings>4100;4706;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <!-- /sdl: the extra compile-time and run-time checks that come with /GS.
+           Nothing in this tree needs the looser defaults. -->
+      <SDLCheck>true</SDLCheck>
+      <EnablePREfast>true</EnablePREfast>
+      <!-- The analyser's four standing notes, each read once and accepted:
+           C6054 the buffer is terminated by StringCchVPrintf inside the
+                 UStrPrint wrapper, which the analyser does not see through;
+           C28159 GetTickCount is deliberate: a boot chain does not run for the
+                 49 days it takes the 32-bit counter to wrap;
+           C28251 the entry point is spelled with the classic _tWinMain shape;
+           C6335 the two process handles are closed by the guard in Exec(). -->
+      <DisableSpecificWarnings>4100;4706;6054;28159;28251;6335;%(DisableSpecificWarnings)</DisableSpecificWarnings>
       <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -81,9 +101,12 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <ExceptionHandling>Sync</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
+      <DisableSpecificWarnings>4100;4706;6054;28159;28251;6335;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>true</SDLCheck>
+      <EnablePREfast>true</EnablePREfast>
       <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>

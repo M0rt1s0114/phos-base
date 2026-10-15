@@ -183,13 +183,13 @@ HRESULT Regi(CoreContext& ctx, PTSTR ptzCmd)
 		ptzVar = UStrChr(ptzValue, ',');
 		if (ptzVar)
 		{
-			TCHAR tzData[MAX_STR] = {0};
+			TCHAR tzValueData[MAX_STR] = {0};
 			DWORD dwType = 0;
-			DWORD cbData = sizeof(tzData);
+			DWORD cbData = sizeof(tzValueData);
 			HRESULT hr;
 
 			*ptzVar++ = 0;
-			hr = RegQueryValueRaw(hKey, tzSubKey, ptzValue, &dwType, tzData, &cbData);
+			hr = RegQueryValueRaw(hKey, tzSubKey, ptzValue, &dwType, tzValueData, &cbData);
 			if (hr != S_OK)
 			{
 				return hr;
@@ -198,7 +198,7 @@ HRESULT Regi(CoreContext& ctx, PTSTR ptzCmd)
 			{
 				return E_INVALIDARG;
 			}
-			return PeVar::Set(ptzVar, tzData) ? S_OK : S_FALSE;
+			return PeVar::Set(ptzVar, tzValueData) ? S_OK : S_FALSE;
 		}
 
 		return E_INVALIDARG;
@@ -400,7 +400,7 @@ HRESULT Envi(CoreContext& ctx, PTSTR ptzCmd)
 	}
 
 	bSys = (*ptzCmd == '$');
-	ptzCmd = ptzCmd + bSys;
+	ptzCmd += bSys ? 1 : 0;
 
 	if (PeVar::IsPeName(ptzCmd) || ((!bSys) && PeVar::ForceLocal()))
 	{

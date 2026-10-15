@@ -166,7 +166,10 @@ PTSTR ShellBrowseFolder(PTSTR InitPath,BOOL IncludeFiles,PTSTR ptzTitle)
 
 	bi.hwndOwner = s_hLogo;
 	bi.lpfn = BrowseCallbackProc;
-	ITEMIDLIST *pIDL = SHBrowseForFolder(&bi);
+	// The SDK's spelling, which carries the __unaligned qualifier the plain
+	// ITEMIDLIST * does not: assigning across the two is what /W4 complains
+	// about.
+	LPITEMIDLIST pIDL = SHBrowseForFolder(&bi);
 	if (SHGetPathFromIDList(pIDL,InitPath))
 	{
 		return InitPath;

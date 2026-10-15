@@ -249,7 +249,7 @@ VOID SetError(HRESULT eResult)
 {
 	TCHAR tzError[MAX_NAME];
 
-	LastError = eResult ? GetLastError() : 0;
+	LastError = (eResult != S_OK) ? GetLastError() : 0;
 	UStrPrint(tzError, TEXT("%d"), LastError);
 	SetEnvironmentVariable(TEXT("Error"), tzError);
 }

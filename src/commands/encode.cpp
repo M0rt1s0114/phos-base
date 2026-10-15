@@ -385,7 +385,7 @@ HRESULT Hash(CoreContext& ctx, PTSTR ptzCmd)
 	}
 	else
 	{
-		UINT uRead = -1;
+		UINT uRead = (UINT) -1;
 		PBYTE pbFile = (PBYTE) UFileLoad(ptzSource, NULL, &uRead);
 		if (!pbFile)
 		{
@@ -405,7 +405,7 @@ HRESULT Hash(CoreContext& ctx, PTSTR ptzCmd)
 	else
 	{
 		HRESULT hResult = CryptoDigest(tzType, pbData, uSize, tzHex, _NumOf(tzHex));
-		if (hResult)
+		if (hResult != S_OK)
 		{
 			UMemFree(pbFree);
 			return hResult;

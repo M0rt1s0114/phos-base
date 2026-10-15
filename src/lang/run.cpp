@@ -402,7 +402,7 @@ namespace Lang
 
 	bool CheckFile(PCTSTR ptzPath, String& errOut)
 	{
-		UINT uSize = -1;
+		UINT uSize = (UINT) -1;
 		PBYTE pb = (PBYTE) UFileLoad((PTSTR) ptzPath, NULL, &uSize);
 		bool ok;
 

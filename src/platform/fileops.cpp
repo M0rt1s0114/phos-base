@@ -219,7 +219,7 @@ HRESULT CreateShortcut(PCTSTR ptzLnk, PCTSTR ptzTarget, PCTSTR ptzArgs, PCTSTR p
 		ptzIcon = tzIcon;
 	}
 
-	CoInitialize(NULL);
+	HRESULT hInit = CoInitialize(NULL);
 	hResult = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLink, (PVOID *) &pLink);
 	if (hResult == S_OK)
 	{
@@ -237,8 +237,16 @@ HRESULT CreateShortcut(PCTSTR ptzLnk, PCTSTR ptzTarget, PCTSTR ptzArgs, PCTSTR p
 				hResult = pLink->SetShowCmd(SW_SHOWMINIMIZED);
 			}
 			hResult = pLink->SetPath((PTSTR) ptzTarget);
-			hResult = pLink->SetArguments((PTSTR) ptzArgs);
-			hResult = pLink->SetIconLocation((PTSTR) ptzIcon, iIcon);
+			// A NULL argument or icon means "leave it out": the shell's setters
+			// do not take NULL, and the analyser is right to say so.
+			if (ptzArgs)
+			{
+				hResult = pLink->SetArguments((PTSTR) ptzArgs);
+			}
+			if (ptzIcon)
+			{
+				hResult = pLink->SetIconLocation((PTSTR) ptzIcon, iIcon);
+			}
 
 			// "Start in the target's folder" -- but only when the target has
 			// one. UDirSplitPath truncates in place, hence the copy.
@@ -257,7 +265,10 @@ HRESULT CreateShortcut(PCTSTR ptzLnk, PCTSTR ptzTarget, PCTSTR ptzArgs, PCTSTR p
 		}
 		pLink->Release();
 	}
-	CoUninitialize();
+	if (SUCCEEDED(hInit))
+	{
+		CoUninitialize();
+	}
 	return hResult;
 }
 
@@ -342,11 +353,11 @@ HRESULT Send(CoreContext& ctx, PTSTR ptzCmd)
 		iLast = UStrToInt(ptzField);
 		if (cSuffix != '^')
 		{
-			keybd_event(iLast, 0, 0, 0);
+			keybd_event((BYTE) iLast, 0, 0, 0);
 		}
 		if (cSuffix != '_')
 		{
-			keybd_event(iLast, 0, KEYEVENTF_KEYUP, 0);
+			keybd_event((BYTE) iLast, 0, KEYEVENTF_KEYUP, 0);
 		}
 
 		if (!ptzSep)
@@ -363,7 +374,7 @@ HRESULT Send(CoreContext& ctx, PTSTR ptzCmd)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Find process
-HRESULT FindProc(PCTSTR ptzCmd)
+DWORD FindProc(PCTSTR ptzCmd)
 {
 	// With a name: the first process whose image name starts with it, which is
 	// how "explorer" stands for "explorer.exe". With no name: this process's
@@ -459,7 +470,11 @@ HRESULT Boot(BOOL bReboot)
 	SendMessageTimeout(HWND_BROADCAST, WM_DESTROY, 0, 0, 0, 2000, &dwResult);
 
 	// NtShutdownSystem is in no import library, so it is looked up by name.
-	NtShutdownSystem = (PNtShutdownSystem) GetProcAddress(GetModuleHandle(TEXT("NTDLL")), "NtShutdownSystem");
+	{
+		HMODULE hNtdll = GetModuleHandle(TEXT("NTDLL"));
+
+		NtShutdownSystem = hNtdll ? (PNtShutdownSystem) GetProcAddress(hNtdll, "NtShutdownSystem") : NULL;
+	}
 	if (!NtShutdownSystem)
 	{
 		return E_FAIL;
