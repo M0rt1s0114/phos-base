@@ -127,7 +127,7 @@ The sources are compiled as one translation unit: `src/app/unity.cpp` includes t
 
 ## Contributing
 
-Bug reports and pull requests are handled in this repository's issue tracker. The command set and the script syntax are a compatibility surface: additions are accepted, changes that alter the result of an existing command or script are not.
+Bug reports and pull requests are handled in this repository's issue tracker. The command set and the script syntax are stabilising rather than frozen: additions are accepted, and a change that would alter the result of an existing command file or script is made only when the present behaviour is a defect.
 
 ## Acknowledgements
 
