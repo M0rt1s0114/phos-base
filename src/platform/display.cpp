@@ -277,7 +277,10 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax)
 		return E_INVALIDARG;
 	}
 	UStrCopyN(tzDrive, ptzPath, 3);          // "X:" and its terminator
-	UStrCopy(tzFile, (PTSTR) ptzPath + 2);
+	if (!UStrCopyTo(tzFile, (PTSTR) ptzPath + 2))
+	{
+		return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+	}
 
 	// The call wants the device name, and a script has a drive letter.
 	if (!QueryDosDevice(tzDrive, tzDos, MAX_PATH))

@@ -199,12 +199,17 @@ static PTSTR MenuItemLabel(PTSTR ptzText)
 
 	if (ptzCmd)
 	{
-		TCHAR tzCmd[MAX_PATH];
+		TCHAR tzCmd[MAX_PATH] = {0};
 
 		*ptzCmd++ = 0;
 		ExpandEnvironmentStrings(UStrTrim(ptzCmd), tzCmd, _NumOf(tzCmd));
-		UStrCopy(MenuCommand[ToalMenu], tzCmd);
-		ToalMenu++;
+		// The table has a fixed size, and this is one of the two places that
+		// writes into it.
+		if (ToalMenu < MENU_COMMAND_MAX)
+		{
+			UStrCopyTo(MenuCommand[ToalMenu], tzCmd);
+			ToalMenu++;
+		}
 	}
 	return UStrTrim(ptzText);
 }
@@ -641,6 +646,14 @@ HRESULT Hotk(CoreContext& ctx, PTSTR ptzHotk)
 
 	HotkCount++;
 	UStrPrint(tzValueName, TEXT("HotKey%d"), HotkCount);
+
+	// A binding that does not fit is refused: a shortened one would register a
+	// different command for that key.
+	if ((UStrLen(ptzCommand) + 24) >= _NumOf(tzBinding))
+	{
+		HotkCount--;
+		return E_INVALIDARG;
+	}
 	UStrPrint(tzBinding, TEXT("%s,%d,%d"), ptzCommand, uMod, uKey);
 	SHSetValue(HKEY_LOCAL_MACHINE, PELOGON, tzValueName, REG_SZ, tzBinding,
 		UStrLen(tzBinding) * sizeof(TCHAR));

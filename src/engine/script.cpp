@@ -1,11 +1,17 @@
 ﻿// One line of the script buffer, with any trailing backtick comment removed. The
 // caller hands in the character that ends the line so this can stop there without
 // copying the whole file.
-PTSTR GetNewLine(PTSTR ptBuf, PTSTR ptOldLine, PTSTR ptEnd)
+PTSTR GetNewLine(PTSTR ptBuf, UINT cchBuf, PTSTR ptOldLine, PTSTR ptEnd)
 {
 	TCHAR cSaved = *ptEnd;
 	PTSTR ptzComment;
 
+	// A line that does not fit is refused rather than shortened: half a command
+	// is a different command, and the buffer used to run over instead.
+	if (((size_t) (ptEnd - ptOldLine) + 1) > cchBuf)
+	{
+		return NULL;
+	}
 	*ptEnd = 0;
 	UStrCopy(ptBuf, ptOldLine);
 	*ptEnd = cSaved;
@@ -127,7 +133,12 @@ static HRESULT ScriptParse(PTSTR buffer, InsnList *script)
 		}
 
 		TCHAR CurLine[MAX_STR];
-		PTSTR Newp = GetNewLine(CurLine, p, q);
+		PTSTR Newp = GetNewLine(CurLine, _NumOf(CurLine), p, q);
+
+		if (!Newp)
+		{
+			return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+		}
 
 		while (pScanned < p)
 		{
@@ -230,10 +241,17 @@ static VOID ScriptRunFrom(InsnList *script, UINT start)
 // Run the sub body whose name is ptzCmd.
 HRESULT CallSub(PTSTR ptzCmd)
 {
-	TCHAR tzPath[MAX_NAME];
+	TCHAR tzPath[MAX_PATH];
 	// A sub body is a scope: a variable it creates locally is gone on return.
 	PeVar::ScopeGuard scope;
-	UStrPrint(tzPath, TEXT("%s %s"), SUBLabel,ptzCmd);
+
+	// "_SUB " plus the name: a sub name that does not fit is an error rather
+	// than a search for a shortened one.
+	if ((UStrLen(SUBLabel) + UStrLen(ptzCmd) + 1) >= _NumOf(tzPath))
+	{
+		return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+	}
+	UStrPrint(tzPath, TEXT("%s %s"), SUBLabel, ptzCmd);
 
 	PTSTR p = UStrStr(pFileStart, tzPath); // where the sub body starts
 	if (p)
@@ -260,7 +278,12 @@ HRESULT CallSub(PTSTR ptzCmd)
 			if ((*q == '\r') || (*q == '\n'))
 			{
 				TCHAR CurLine[MAX_STR];
-				PTSTR Newp =GetNewLine(CurLine,p,q);
+				PTSTR Newp = GetNewLine(CurLine, _NumOf(CurLine), p, q);
+
+				if (!Newp)
+				{
+					return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+				}
 
 				if ((Newp[0]) && (Newp[0] != '`') && (Newp[0] != '/')) // not a comment and not a blank line
 				{
@@ -436,6 +459,7 @@ static PWSTR DecodeScript(PBYTE pbFile, UINT uSize)
 	if ((uSize >= 2) && (pbFile[0] == 0xFF) && (pbFile[1] == 0xFE))
 	{
 		bUtf16 = TRUE;
+		uSkip = 2;		// the BOM is a marker, not the first character
 	}
 	else if ((uSize >= 2) && (pbFile[0] == 0xFE) && (pbFile[1] == 0xFF))
 	{
@@ -468,24 +492,40 @@ static PWSTR DecodeScript(PBYTE pbFile, UINT uSize)
 	if (bUtf16)
 	{
 		UINT uCount = (uSize - uSkip) / 2;
-		PBYTE pb = pbFile + uSkip;
-		for (UINT k = 0; k < uCount; k++)
+		PBYTE pb = pbFile;
+		UINT k;
+
+		// Both orders have to end up at the start of the buffer the caller
+		// allocated: it frees that pointer, so handing back an interior one
+		// would free the middle of a heap block. The BOM is dropped by the same
+		// move, which is also what keeps a UTF-16LE first line parseable -- the
+		// trim in the text side only knows about spaces and tabs.
+		if (bSwap)
 		{
-			if (bSwap)
+			for (k = 0; k < uCount; k++)
 			{
-				BYTE t = pb[2 * k];
-				pb[2 * k] = pb[2 * k + 1];
-				pb[2 * k + 1] = t;
+				BYTE t = pb[uSkip + 2 * k];
+				pb[uSkip + 2 * k] = pb[uSkip + 2 * k + 1];
+				pb[uSkip + 2 * k + 1] = t;
 			}
 		}
-		// The buffer is already the wide form of the text.
-		return (PWSTR) ((bSwap) ? (pbFile + uSkip) : pbFile);
+		if (uSkip)
+		{
+			memmove(pb, pb + uSkip, (size_t) uCount * 2);
+		}
+		((PWSTR) pb)[uCount] = 0;
+		return (PWSTR) pb;
 	}
 
 	uChars = (uSize - uSkip) + MD5Str_Len;
 	pwzOut = (PWSTR) UMemAlloc((uChars + 1) * sizeof(WCHAR));
+	if (!pwzOut)
+	{
+		UMemFree(pbFile);
+		return NULL;
+	}
 	n = MultiByteToWideChar(uCodePage, 0, (PCSTR) (pbFile + uSkip), (INT) (uSize - uSkip), pwzOut, (INT) uChars);
-	if (n < 0)
+	if (n <= 0)
 	{
 		n = 0;
 	}
@@ -547,6 +587,13 @@ HRESULT LoadFile(PTSTR ptzPath)
 	// build runs scripts as ANSI, so the wide form is an intermediate there.
 	{
 		PWSTR pwzScript = DecodeScript(pbFile, uSize);
+
+		// DecodeScript frees the file buffer itself, and answers NULL when the
+		// wide copy could not be allocated.
+		if (!pwzScript)
+		{
+			return E_OUTOFMEMORY;
+		}
 #ifdef _UNICODE
 		p = pwzScript;
 		pbFile = (PBYTE) p;
@@ -566,10 +613,12 @@ HRESULT LoadFile(PTSTR ptzPath)
 	pFileStart = pCurFileStart;
 		InsnList script;
 	InsnList *prevScript = g_pScript;
-	if (ScriptParse((PTSTR) pbFile, &script) != S_OK)
+	HRESULT hrParse = ScriptParse((PTSTR) pbFile, &script);
+
+	if (hrParse != S_OK)
 	{
 		UMemFree(pbFile);
-		return E_OUTOFMEMORY;
+		return hrParse;
 	}
 	g_pScript = &script;
 	{
@@ -601,20 +650,33 @@ HRESULT Load(CoreContext& ctx, PTSTR ptzPath)
 
 	if (*ptzPath == '\\')
 	{
-		TCHAR tzRoots[MAX_NAME];
+		// MAX_PATH, not MAX_NAME: the list is a run of double-NUL terminated
+		// roots, and eighty characters only holds nineteen of them -- a machine
+		// with more drives than that lost the tail of the list silently.
+		TCHAR tzRoots[MAX_PATH];
+		HRESULT hr = S_OK;
 
 		ptzPath++;                      // the rest of the path, with no root on it
 		GetLogicalDriveStrings(_NumOf(tzRoots), tzRoots);
 		for (PTSTR ptzRoot = tzRoots; *ptzRoot; ptzRoot += UStrLen(ptzRoot) + 1)
 		{
-			TCHAR tzFull[MAX_NAME];
+			TCHAR tzFull[MAX_PATH];
 
+			// The path is assembled here, so this is where one that cannot fit
+			// has to stop -- LoadFile reads up to MAX_PATH of its own.
+			if ((UStrLen(ptzRoot) + UStrLen(ptzPath)) >= _NumOf(tzFull))
+			{
+				hr = HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+				break;
+			}
 			UStrPrint(tzFull, TEXT("%s%s"), ptzRoot, ptzPath);
 			if (UFileExist(tzFull))
 			{
 				LoadFile(tzFull);
 			}
 		}
+		pFileStart = ptzSavedFileStart;
+		return hr;
 	}
 	else if (UFileExist(ptzPath))
 	{
@@ -859,7 +921,10 @@ HRESULT Forx(CoreContext& ctx, PTSTR ptzCmd)
 			}
 
 			// FindFirstFile hands back the name alone, so put the directory back.
-			UStrCopy(tzItem, ptzSet);
+			if (!UStrCopyTo(tzItem, ptzSet))
+			{
+				continue;		// a path that cannot be built is not that file
+			}
 			ptzSlash = UStrRChr(tzItem, '\\');
 			if (ptzSlash)
 			{
@@ -869,7 +934,10 @@ HRESULT Forx(CoreContext& ctx, PTSTR ptzCmd)
 			{
 				tzItem[0] = 0;
 			}
-			UStrCat(tzItem, FindData.cFileName);
+			if (!UStrCatTo(tzItem, FindData.cFileName))
+			{
+				continue;
+			}
 
 			ForxSetItem(ptzName, tzItem);
 			nCount++;

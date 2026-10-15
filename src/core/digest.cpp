@@ -1,5 +1,7 @@
 ﻿#include "digest.h"
 
+#include <vector>
+
 TCHAR MD5_Code_Buf[MD5Str_Len * 2 + 1];
 
 // MD5, written out from the description in RFC 1321.
@@ -175,13 +177,17 @@ PTSTR ByteToMD5(const BYTE pByteBuf[], UINT pBufLen)
 // so it is not a detail that can drift.
 PTSTR UStrToMD5(PTSTR ptzCmd)
 {
-	CHAR tzTempBuf[MAX_NAME];
-	UINT uLen = 0;
+	// The ANSI byte count, asked for rather than assumed: it is not the
+	// character count for anything outside ASCII, and the fixed buffer this
+	// used to fill turned a long string into a hash of the empty one.
+	int cb = WideCharToMultiByte(CP_ACP, 0, ptzCmd, -1, NULL, 0, NULL, NULL);
+	std::vector<CHAR> text;
 
-	UStrToAStr(tzTempBuf, ptzCmd, MAX_NAME);
-	while (tzTempBuf[uLen])
+	if (cb <= 0)
 	{
-		uLen++;
+		return ByteToMD5((const BYTE *) "", 0);
 	}
-	return ByteToMD5((const BYTE *) tzTempBuf, uLen);
+	text.resize((size_t) cb);
+	WideCharToMultiByte(CP_ACP, 0, ptzCmd, -1, &text[0], cb, NULL, NULL);
+	return ByteToMD5((const BYTE *) &text[0], (UINT) (cb - 1));
 }

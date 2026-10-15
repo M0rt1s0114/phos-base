@@ -157,6 +157,22 @@ inline int UStrPrintVTo(TCHAR (&buf)[N], const TCHAR *ptzFmt, va_list args)
 #define UStrPrintN(buf, n, ...)		StringCchPrintf(buf, (size_t) (n), __VA_ARGS__)
 #define UStrPrintV(buf, fmt, va)	UStrPrintVTo(buf, fmt, va)
 
+// Copies that refuse to cut, for the places where a shortened string names a
+// different thing -- a path, a registry key, a command. The capacity comes from
+// the array itself, so the check cannot drift away from the buffer; passing a
+// pointer does not compile, on purpose.
+template <size_t N>
+inline BOOL UStrCopyTo(TCHAR (&dst)[N], PCTSTR src)
+{
+	return SUCCEEDED(StringCchCopy(dst, N, src));
+}
+
+template <size_t N>
+inline BOOL UStrCatTo(TCHAR (&dst)[N], PCTSTR src)
+{
+	return SUCCEEDED(StringCchCat(dst, N, src));
+}
+
 // The narrow-string length, for the half of the code that works in bytes.
 inline UINT UAStrLen(PCSTR pszStr)
 {

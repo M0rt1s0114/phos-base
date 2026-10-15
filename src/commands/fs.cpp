@@ -37,7 +37,10 @@
 			*p++ = 0;
 			LogSize = UStrToInt(p);
 		}		
-		UStrCopy(LogFileName,ptzCmd);
+		if (!UStrCopyTo(LogFileName, ptzCmd))
+		{
+			return E_INVALIDARG;
+		}
 		// UMemRealloc is plain realloc, so this memory is uninitialised. Writing
 		// only the first half of the BOM leaves the string unterminated, and the
 		// next command's SetLogs then appends past the end of it. Zero the buffer,

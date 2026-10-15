@@ -216,7 +216,7 @@ void WaitLogo(BOOL ReDoLoad)
 // The image name behind a pid. Answers the buffer it was given, or NULL when no
 // process has that pid -- an answer ParentProcessIsME relies on, because a parent
 // can already be gone by the time it asks.
-PTSTR FindProcName(DWORD ProcID, PTSTR ProcessName)
+PTSTR FindProcName(DWORD ProcID, PTSTR ProcessName, UINT cchName)
 {
 	HANDLE hSnap;
 	PROCESSENTRY32 pe;
@@ -234,6 +234,12 @@ PTSTR FindProcName(DWORD ProcID, PTSTR ProcessName)
 		if (pe.th32ProcessID != ProcID)
 		{
 			continue;
+		}
+		// The caller's buffer is the caller's size: an image name that does not
+		// fit is answered with nothing rather than with a shortened one.
+		if ((UStrLen(pe.szExeFile) + 1) > cchName)
+		{
+			break;
 		}
 		UStrCopy(ProcessName, pe.szExeFile);
 		ptzResult = ProcessName;
@@ -277,7 +283,8 @@ BOOL ParentProcessIsME(void)
 	TCHAR tzSelfName[MAX_NAME];
 	PCTSTR apszOurs[3];
 	UINT uCount = 0;
-	PTSTR ptzParent = FindProcName((DWORD) FindProc(NULL), ParentProcessName);
+	PTSTR ptzParent = FindProcName((DWORD) FindProc(NULL), ParentProcessName,
+		_NumOf(ParentProcessName));
 
 	// This module's own image name counts, so a second copy started by a script is
 	// recognised. Two older names are accepted as well, for callers and copies that
@@ -367,14 +374,25 @@ HRESULT SetLogoText(PCTSTR ptzText, DWORD dwColor, INT iLeft, INT iTop, INT iRig
 	if (iBottom >= 0) { s_rtText.bottom = iBottom; }
 	if (iSize >= 0)   { fontsize = (UINT) iSize; }
 
-	UStrCopy(tzText, (PTSTR) ((ptzText != NULL) ? ptzText : TEXT("")));
+	if (!UStrCopyTo(tzText, (ptzText != NULL) ? ptzText : TEXT("")))
+	{
+		return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+	}
 	ptzBody = UStrTrim(tzText);
 	bClear = (*ptzBody == 0);
 	ptzBody = USplitStr(ptzBody);
 
 	// "Do not use this text" is written as a test rather than folded into the
 	// pointer: folding needs a pointer to fit in a DWORD, which is not true on x64.
-	UStrCopy(s_tzText, ptzBody);
+	//
+	// s_tzText is eighty characters and lives next to the colour, the font size
+	// and the font handle in the boot context: an over-long splash line used to
+	// run over the end of it, and the crash that followed was in whatever got
+	// overwritten. Refuse the text instead.
+	if (!UStrCopyTo(s_tzText, ptzBody))
+	{
+		return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+	}
 
 	if (fontsize && (uOldFontSize != fontsize))
 	{
@@ -543,6 +561,10 @@ static HMODULE LoadGdiPlus(void)
 			if ((fd.cFileName[0] == '.') || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
 			{
 				continue;
+			}
+			if ((UStrLen(tzPattern) + UStrLen(fd.cFileName) + 15) >= _NumOf(tzPath))
+			{
+				continue;		// a path that does not fit cannot name the file
 			}
 			UStrPrint(tzPath, TEXT("%s\\%s\\GdiPlus.dll"), tzPattern, fd.cFileName);
 			hLib = LoadLibrary(tzPath);

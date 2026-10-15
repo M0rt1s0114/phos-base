@@ -350,11 +350,14 @@ HRESULT Hash(CoreContext& ctx, PTSTR ptzCmd)
 	if (ptzType)
 	{
 		*ptzType++ = 0;
-		UStrCopy(tzType, UStrTrim(ptzType));
+		if (!UStrCopyTo(tzType, UStrTrim(ptzType)))
+		{
+			return E_INVALIDARG;
+		}
 	}
 	else
 	{
-		UStrCopy(tzType, TEXT("MD5"));
+		UStrCopyTo(tzType, TEXT("MD5"));
 	}
 	ptzSource = UStrTrim(ptzSource);
 	ptzVar = UStrTrim(ptzVar);

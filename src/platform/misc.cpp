@@ -164,14 +164,16 @@ HRESULT RegFont(PTSTR tzPath)
 //                          the ones that get walked
 HRESULT Font(CoreContext& ctx, PTSTR ptzCmd)
 {
-	TCHAR tzPath[MAX_NAME];
+	TCHAR tzPath[MAX_PATH];
 	HRESULT hResult = ERROR_FILE_NOT_FOUND;
 
 	if (ptzCmd[0] == '\\')
 	{
 		WCHAR tzDvr = 0;
 		PTSTR ptzStart = UStrChr(ptzCmd, ',');
-		TCHAR tzDrives[MAX_NAME];
+		// MAX_PATH, not MAX_NAME: the list is double-NUL terminated roots and
+		// eighty characters only holds nineteen drive letters.
+		TCHAR tzDrives[MAX_PATH];
 		PTSTR p;
 
 		if (ptzStart)
@@ -185,7 +187,7 @@ HRESULT Font(CoreContext& ctx, PTSTR ptzCmd)
 		}
 
 		ptzCmd++;
-		GetLogicalDriveStrings(MAX_NAME, tzDrives);
+		GetLogicalDriveStrings(_NumOf(tzDrives), tzDrives);
 		for (p = tzDrives; *p; p += UStrLen(p) + 1)
 		{
 			if (*p < tzDvr)
@@ -193,10 +195,14 @@ HRESULT Font(CoreContext& ctx, PTSTR ptzCmd)
 				continue;
 			}
 
+			if ((UStrLen(p) + UStrLen(ptzCmd) + 7) >= _NumOf(tzPath))
+			{
+				continue;		// a name that cannot fit is not that folder
+			}
 			UStrPrint(tzPath, TEXT("%s%s\\Fonts"), p, ptzCmd);
 			if (UDirExist(tzPath))
 			{
-				UStrCat(tzPath, TEXT("\\*.*"));
+				UStrCatTo(tzPath, TEXT("\\*.*"));
 				hResult = RegFont(tzPath);
 			}
 		}
@@ -210,7 +216,10 @@ HRESULT Font(CoreContext& ctx, PTSTR ptzCmd)
 		{
 			UStrCat(ptzCmd, TEXT("\\*.*"));
 		}
-		UStrCopy(tzPath, ptzCmd);
+		if (!UStrCopyTo(tzPath, ptzCmd))
+		{
+			return E_INVALIDARG;
+		}
 		UDirSplitPath(ptzCmd);
 		if (UDirExist(ptzCmd))
 		{

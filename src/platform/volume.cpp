@@ -460,7 +460,10 @@ HRESULT Temp(CoreContext& ctx, PTSTR ptzCmd)
 				}
 				if (UDirExist(pzNewPtah))
 				{
-					TCHAR pzNewTempPath[MAX_PATH];
+					// MAX_STR, not MAX_PATH: the line is three names and two
+					// separators joined together, and the pieces are already
+					// path-sized.
+					TCHAR pzNewTempPath[MAX_STR];
 
 					UStrPrint(pzNewTempPath, TEXT("%s\\%s\\Temp=%s"), hKCU, Text_Environment, pzNewPtah);
 					Regi(g_ctx, pzNewTempPath);

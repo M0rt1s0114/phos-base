@@ -26,13 +26,25 @@ PTSTR UINT16ToUStr(PTSTR ptzBuf, const WORD ByteArray[], WORD pzBufLen)
 // would not empty is a failure rather than a success.
 HRESULT SetClipboardText(PTSTR ptzText)
 {
-	CHAR szText[MAX_STR];
+	// Sized from the string, not from a constant: the ANSI byte count of a
+	// Chinese string is not its character count, and the fixed buffer turned an
+	// over-long string into an empty clipboard entry.
+	std::vector<CHAR> text;
 	HGLOBAL hGlobal;
 	UINT uSize;
 	BOOL bResult = FALSE;
 
-	UStrToAStr(szText, ptzText, _NumOf(szText));
-	uSize = UAStrLen(szText);
+	{
+		int cb = WideCharToMultiByte(CP_ACP, 0, ptzText, -1, NULL, 0, NULL, NULL);
+
+		if (cb <= 0)
+		{
+			return S_FALSE;
+		}
+		text.resize((size_t) cb);
+		WideCharToMultiByte(CP_ACP, 0, ptzText, -1, &text[0], cb, NULL, NULL);
+	}
+	uSize = UAStrLen(&text[0]);
 
 	if (!OpenClipboard(NULL))
 	{
@@ -47,7 +59,7 @@ HRESULT SetClipboardText(PTSTR ptzText)
 
 			if (pszLocked)
 			{
-				UMemCopy(pszLocked, szText, uSize + 1);
+				UMemCopy(pszLocked, &text[0], uSize + 1);
 				GlobalUnlock(hGlobal);
 				if (SetClipboardData(CF_TEXT, hGlobal) != NULL)
 				{

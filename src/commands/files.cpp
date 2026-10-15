@@ -226,6 +226,12 @@ static BOOL PathSizeBytes(PCTSTR ptzPath, UINT64 *puSize)
 		return TRUE;
 	}
 
+	// A path that cannot fit is not measured: the caller named something this
+	// buffer cannot spell.
+	if ((UStrLen(ptzPath) + 3) >= _NumOf(tzPattern))
+	{
+		return FALSE;
+	}
 	UStrPrint(tzPattern, TEXT("%s\\*"), ptzPath);
 	hFind = FindFirstFile(tzPattern, &fd);
 	if (hFind == INVALID_HANDLE_VALUE)
@@ -239,6 +245,10 @@ static BOOL PathSizeBytes(PCTSTR ptzPath, UINT64 *puSize)
 		if ((UStrCmp(fd.cFileName, TEXT(".")) == 0) || (UStrCmp(fd.cFileName, TEXT("..")) == 0))
 		{
 			continue;
+		}
+		if ((UStrLen(ptzPath) + UStrLen(fd.cFileName) + 2) >= _NumOf(tzChild))
+		{
+			continue;		// the same: a name that does not fit is not that file
 		}
 		UStrPrint(tzChild, TEXT("%s\\%s"), ptzPath, fd.cFileName);
 		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
@@ -298,7 +308,10 @@ HRESULT Mkdir(CoreContext& ctx, PTSTR ptzCmd)
 {
 	TCHAR tzPath[MAX_PATH];
 
-	UStrCopy(tzPath, UStrTrim(ptzCmd));
+	if (!UStrCopyTo(tzPath, UStrTrim(ptzCmd)))
+	{
+		return E_INVALIDARG;
+	}
 	if (!tzPath[0])
 	{
 		return E_INVALIDARG;
@@ -494,7 +507,10 @@ HRESULT Writ(CoreContext& ctx, PTSTR ptzCmd)
 	{
 		return E_INVALIDARG;
 	}
-	UStrCopy(tzPath, ptzPath);
+	if (!UStrCopyTo(tzPath, ptzPath))
+	{
+		return E_INVALIDARG;
+	}
 
 	if (UFileExist(tzPath))
 	{
@@ -536,12 +552,23 @@ HRESULT Writ(CoreContext& ctx, PTSTR ptzCmd)
 
 		if (ptzText && bExpand)
 		{
-			UStrCopy(tzNew, ptzText);
-			ExpandEnvironmentStrings(tzNew, tzNew, _NumOf(tzNew));
+			// Expanded into the buffer, from another one: the API does not
+			// promise anything when the source and the destination are the same
+			// block.
+			TCHAR tzRaw[MAX_STR];
+
+			if (!UStrCopyTo(tzRaw, ptzText) ||
+				(ExpandEnvironmentStrings(tzRaw, tzNew, _NumOf(tzNew)) == 0))
+			{
+				return E_INVALIDARG;
+			}
 		}
 		else if (ptzText)
 		{
-			UStrCopy(tzNew, ptzText);
+			if (!UStrCopyTo(tzNew, ptzText))
+			{
+				return E_INVALIDARG;
+			}
 		}
 		else
 		{
@@ -739,15 +766,22 @@ HRESULT Dir(CoreContext& ctx, PTSTR ptzCmd)
 	}
 	if (!ptzMask[0])
 	{
-		UStrCopy(tzMask, TEXT("*"));
+		UStrCopyTo(tzMask, TEXT("*"));
 	}
 	else if (UDirExist(ptzMask))
 	{
+		if ((UStrLen(ptzMask) + 3) >= _NumOf(tzMask))
+		{
+			return E_INVALIDARG;
+		}
 		UStrPrint(tzMask, TEXT("%s\\*"), ptzMask);
 	}
 	else
 	{
-		UStrCopy(tzMask, ptzMask);
+		if (!UStrCopyTo(tzMask, ptzMask))
+		{
+			return E_INVALIDARG;
+		}
 	}
 
 	tzOut[0] = 0;
@@ -810,8 +844,10 @@ HRESULT Site(CoreContext& ctx, PTSTR ptzCmd)
 	// The path comes first: "SITE C:\BOOT.INI,+H+R". Handed the attributes
 	// first, the text form looks for a file called "+H" and answers 2, and the
 	// case pins that so the two stay the same shape.
-	UStrCopy(tzPath, UStrTrim(ptzCmd));
-	UStrCopy(tzAttrs, UStrTrim(ptzComma));
+	if (!UStrCopyTo(tzPath, UStrTrim(ptzCmd)) || !UStrCopyTo(tzAttrs, UStrTrim(ptzComma)))
+	{
+		return E_INVALIDARG;
+	}
 	if (!tzPath[0])
 	{
 		return E_INVALIDARG;

@@ -133,6 +133,13 @@ HRESULT Regi(CoreContext& ctx, PTSTR ptzCmd)
 	{
 		return E_INVALIDARG;
 	}
+	// The root name, checked against the buffer it goes into: the count handed
+	// to UStrCopyN is how much to copy, not how much room there is, so a long
+	// root name ran over the end of tzRoot.
+	if (((size_t) (ptzSplit - ptzCmd) + 1) > _NumOf(tzRoot))
+	{
+		return E_INVALIDARG;
+	}
 	UStrCopyN(tzRoot, ptzCmd, (UINT) (ptzSplit - ptzCmd) + 1);
 
 	HKEY hKey = RegRootFromName(tzRoot);
@@ -421,6 +428,11 @@ HRESULT Envi(CoreContext& ctx, PTSTR ptzCmd)
 
 		// ForceLocal turned a bare name into a PE variable.
 		TCHAR tzName[MAX_NAME];
+
+		if ((UStrLen(ptzName) + 3) >= _NumOf(tzName))
+		{
+			return E_INVALIDARG;
+		}
 		UStrPrint(tzName, TEXT("&&%s"), ptzName);
 		return PeVar::Set(tzName, ptzValue) ? S_OK : S_FALSE;
 	}
@@ -457,6 +469,10 @@ HRESULT SetVar(CoreContext& ctx, PTSTR ptzCmd)
 		return PeVar::Set(ptzName, ptzValue) ? S_OK : S_FALSE;
 	}
 
+	if ((UStrLen(ptzName) + 3) >= _NumOf(tzName))
+	{
+		return E_INVALIDARG;
+	}
 	UStrPrint(tzName, TEXT("&&%s"), ptzName);
 	if (!PeVar::Set(tzName, ptzValue))
 	{

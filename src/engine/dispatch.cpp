@@ -135,6 +135,16 @@ HRESULT Command(PTSTR ptzCmd)
 	// command literally named "CMD=". Take one copy of the caller's text and
 	// use that from here on; the pointer itself is not valid any more.
 	TCHAR tzRaw[MAX_STR];
+
+	// Everything below is a MAX_STR buffer, and the text arrives from the
+	// command line, from a hotkey, or from a script line: refuse what cannot
+	// fit instead of running over the end of the stack frame. (A file line that
+	// is too long is caught where it is read, by GetNewLine.)
+	if (UStrLen(ptzCmd) >= MAX_STR)
+	{
+		SetLastError(ERROR_BUFFER_OVERFLOW);
+		return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+	}
 	UStrCopy(tzRaw, ptzCmd);
 	UStrCopy(g_ctx.RawCommand, tzRaw);
 
@@ -144,8 +154,19 @@ HRESULT Command(PTSTR ptzCmd)
 	PeVar::Expand(tzPe, MAX_STR, tzRaw);
 
 	TCHAR tzCmdStr[MAX_STR];
-	TCHAR tzCmd[MAX_STR];
-	ExpandEnvironmentStrings(tzPe, tzCmd, MAX_STR);
+	TCHAR tzCmd[MAX_STR] = {0};
+	{
+		// The answer is the size the expansion needs, and the buffer is not
+		// written at all when it does not fit -- so an over-long expansion used
+		// to be read back as whatever the stack held.
+		DWORD dwExpand = ExpandEnvironmentStrings(tzPe, tzCmd, MAX_STR);
+
+		if ((dwExpand == 0) || (dwExpand > MAX_STR))
+		{
+			SetLastError(ERROR_BUFFER_OVERFLOW);
+			return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+		}
+	}
 	UStrCopy(tzCmdStr,tzCmd);
 
 	UINT uCmd = 0;

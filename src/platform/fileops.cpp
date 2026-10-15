@@ -197,6 +197,13 @@ HRESULT CreateShortcut(PCTSTR ptzLnk, PCTSTR ptzTarget, PCTSTR ptzArgs, PCTSTR p
 	TCHAR tzTarget[MAX_PATH];
 	TCHAR tzIcon[MAX_PATH];
 
+	// Both of these are copied into a MAX_PATH buffer further down, and a
+	// shortcut whose target or name was cut short would point somewhere else.
+	if ((UStrLen(ptzTarget) >= MAX_PATH) || ((UStrLen(ptzLnk) + 4) >= MAX_PATH))
+	{
+		return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+	}
+
 	if (!bVerbatimTarget)
 	{
 		if (SearchPath(NULL, ptzTarget, NULL, MAX_PATH, tzTarget, NULL))

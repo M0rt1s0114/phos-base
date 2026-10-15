@@ -219,7 +219,10 @@ HRESULT ShowLogo(PCTSTR ptzImage)
 		// language passes in.
 		static TCHAR tzImage[MAX_PATH];
 
-		UStrCopy(tzImage, (PTSTR) ptzImage);
+		if (!UStrCopyTo(tzImage, ptzImage))
+		{
+			return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+		}
 		tzDrawTextDone = FALSE;
 		ExistLogoImage = FALSE;
 		UThreadClose(UThreadCreate((UPROC) LogoCMD, tzImage));

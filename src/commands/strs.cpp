@@ -61,7 +61,10 @@ HRESULT Fdir(CoreContext& ctx, PTSTR ptzCmd)
 	{
 		return E_INVALIDARG;
 	}
-	UStrCopy(tzPath, ptzValue);
+	if (!UStrCopyTo(tzPath, ptzValue))
+	{
+		return E_INVALIDARG;
+	}
 	UDirSplitPath(tzPath);            // trims the name off in place
 	return StoreResult(ptzName, tzPath) ? S_OK : S_FALSE;
 }
@@ -79,7 +82,10 @@ HRESULT Fext(CoreContext& ctx, PTSTR ptzCmd)
 		return E_INVALIDARG;
 	}
 	// Only the name part counts: a dot in a directory name is not an extension.
-	UStrCopy(tzPath, ptzValue);
+	if (!UStrCopyTo(tzPath, ptzValue))
+	{
+		return E_INVALIDARG;
+	}
 	ptzDot = UDirSplitPath(tzPath);       // returns the name part
 	ptzDot = UStrRChr(ptzDot, '.');
 	return StoreResult(ptzName, ptzDot ? ptzDot + 1 : TEXT("")) ? S_OK : S_FALSE;
@@ -109,7 +115,10 @@ static HRESULT NameOrFnam(CoreContext& ctx, PTSTR ptzCmd)
 	{
 		return E_INVALIDARG;
 	}
-	UStrCopy(tzPath, ptzValue);
+	if (!UStrCopyTo(tzPath, ptzValue))
+	{
+		return E_INVALIDARG;
+	}
 	ptzBase = UDirSplitPath(tzPath);
 	if (!bKeepExt)
 	{
@@ -172,7 +181,13 @@ HRESULT Lstr(CoreContext& ctx, PTSTR ptzCmd)
 	}
 	if (bFromVar)
 	{
-		PeVar::Get(ptzValue, tzText, _NumOf(tzText));       // "*" = the count came from a variable
+		// "*" = the count came from a variable. One that is not there used to
+		// leave this buffer uninitialised and the count was read out of whatever
+		// was on the stack; answer -1, as the numeric form does.
+		if (!PeVar::Get(ptzValue, tzText, _NumOf(tzText)))
+		{
+			return StoreResult(ptzName, TEXT("-1")) ? S_OK : S_FALSE;
+		}
 		ptzValue = tzText;
 	}
 	if ((iCount < 1) || ((UINT) iCount > UStrLen(ptzValue)))

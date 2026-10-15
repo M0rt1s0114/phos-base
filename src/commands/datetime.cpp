@@ -26,7 +26,12 @@ HRESULT Date(CoreContext& ctx, PTSTR ptzCmd)
 	if (ptzSub)
 	{
 		*ptzSub++ = 0;
-		UStrCopy(tzSub, UStrTrim(ptzSub));
+		// A sub-item that does not fit is refused: a shortened one would be a
+		// different field.
+		if (!UStrCopyTo(tzSub, UStrTrim(ptzSub)))
+		{
+			return E_INVALIDARG;
+		}
 	}
 	else
 	{
