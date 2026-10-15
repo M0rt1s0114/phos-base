@@ -1,0 +1,144 @@
+# Publishing: push a tag and a release comes out; push anything else and
+# nothing runs. The tag alone decides what kind of release it is -- a bare
+# major.minor.patch tag (1.0.0) is a Release, a tag carrying a pre-release
+# suffix (0.1.0-beta1) is a pre-release.
+#
+# Both architectures come out of one matrix. The release carries the two
+# executables and nothing else: Windows PE wants a single statically linked
+# file dropped into System32, not an installer and not a zip to unpack.
+#
+# The action versions below are the ones that run on Node 24; the runners are
+# retiring Node 20. Publishing shells out to the gh CLI that is already on the
+# image instead of using a release action, so there is no third runtime here
+# that can age out from under the workflow.
+
+name: release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.platform }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [Win32, x64]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Locate MSBuild
+        id: msbuild
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw "vswhere is not on this runner: $vswhere" }
+
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild `
+            -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw 'no MSBuild on this runner' }
+          "path=$msbuild" >> $env:GITHUB_OUTPUT
+          Write-Host "msbuild: $msbuild"
+
+          # The project file asks for the v142 toolset. If an image stops
+          # carrying it the build says so, and these lines say what the image
+          # does carry instead, so the log answers the question by itself.
+          $vs = & $vswhere -latest -products * -property installationPath
+          Write-Host "visual studio: $vs"
+          Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC') -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "  toolset $($_.Name)" }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          & '${{ steps.msbuild.outputs.path }}' phosphor.vcxproj `
+            /p:Configuration=Release `
+            /p:Platform=${{ matrix.platform }} `
+            /nologo /v:minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Name the artifact
+        shell: pwsh
+        run: |
+          $built = "build/${{ matrix.platform }}/phos.exe"
+          if (-not (Test-Path $built)) { throw "the build left no $built behind" }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $built "out/phos-${{ matrix.platform }}.exe"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: phos-${{ matrix.platform }}
+          path: out/phos-${{ matrix.platform }}.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Work out whether this is a Release or a pre-release
+        id: kind
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          # A bare major.minor.patch is a Release. Everything else -- beta,
+          # alpha, rc, or a tag that is not a version at all -- is published as
+          # a pre-release, which is the safe way round for a mistake.
+          if ($version -match '^\d+\.\d+\.\d+$') {
+            'prerelease=false' >> $env:GITHUB_OUTPUT
+            Write-Host "$version looks like a release"
+          } else {
+            'prerelease=true' >> $env:GITHUB_OUTPUT
+            Write-Host "$version does not look like a bare version, so this is a pre-release"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Compare the tag with the version the sources declare
+        shell: pwsh
+        run: |
+          # Not a gate: the release still goes out. A mismatch is worth a loud
+          # line, though, because the binaries would then report a different
+          # version than the one the tag promises.
+          $found = Select-String -Path src/app/identity.h `
+            -Pattern 'STR_VersionText\s+TEXT\("([^"]+)"\)' | Select-Object -First 1
+          $version = '${{ steps.kind.outputs.version }}'
+          if (-not $found) {
+            Write-Host '::warning title=Version unknown::src/app/identity.h has no readable STR_VersionText'
+          } elseif ($found.Matches[0].Groups[1].Value -ne $version) {
+            Write-Host "::warning title=Version mismatch::the sources declare $($found.Matches[0].Groups[1].Value) but the tag says $version"
+          } else {
+            Write-Host "the tag and the sources agree: $version"
+          }
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $arguments = @(
+            'release', 'create', '${{ github.ref_name }}',
+            'dist/phos-Win32.exe',
+            'dist/phos-x64.exe',
+            '--title', 'Project Phosphor Base ${{ github.ref_name }}',
+            '--verify-tag',
+            '--generate-notes'
+          )
+          if ('${{ steps.kind.outputs.prerelease }}' -eq 'true') {
+            $arguments += '--prerelease'
+          }
+          gh @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
