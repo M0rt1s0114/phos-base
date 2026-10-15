@@ -1,4 +1,6 @@
-# Phosphor Base
+# This project is still being debugged and may still have defects
+
+# Project Phosphor Base
 
 [中文说明](README_CN.md) | **English**
 
