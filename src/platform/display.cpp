@@ -4,8 +4,8 @@
 // BOOL rather than an HRESULT, so "it worked" is 1 and "the token would not
 // open" is 0.
 //
-// The token is closed on both paths: one leaked handle per call would matter
-// here, because these are called on the boot path.
+// The token is closed on both paths. It used to be left open, which is one
+// leaked handle per call, and these are called on the boot path.
 HRESULT Priv(PCTSTR ptzName)
 {
 	HANDLE hToken = NULL;
@@ -22,7 +22,18 @@ HRESULT Priv(PCTSTR ptzName)
 	tPriv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 	if (LookupPrivilegeValue(NULL, ptzName, &tPriv.Privileges[0].Luid))
 	{
+		// AdjustTokenPrivileges answers TRUE when it changed nothing, because
+		// the token does not hold the privilege at all -- the caller has to ask
+		// for the reason. Without this a process without SeShutdownPrivilege
+		// believed it had switched one on. The last error has to be cleared
+		// first: a successful call does not clear it, so a stale
+		// ERROR_NOT_ALL_ASSIGNED from something else would read as a failure.
+		SetLastError(ERROR_SUCCESS);
 		bResult = AdjustTokenPrivileges(hToken, FALSE, &tPriv, sizeof(TOKEN_PRIVILEGES), NULL, NULL);
+		if (bResult && (GetLastError() == ERROR_NOT_ALL_ASSIGNED))
+		{
+			bResult = FALSE;
+		}
 	}
 	CloseHandle(hToken);
 
@@ -34,15 +45,26 @@ HRESULT Priv(PCTSTR ptzName)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Put one mode in place. The answer is the DISP_CHANGE_* code the display driver
 // gave back -- 0 when it took, 0xFFFFFFFE (DISP_CHANGE_BADMODE) for a mode no
-// adapter has. The text form hands that code straight back: the same call
-// answers 0 for a mode that exists and 0xFFFFFFFE for one that does not, so it
-// is not a normalised success/failure.
+// adapter has. The reference hands that code straight back, and case 048 pins
+// it: the same call answers 0 for a mode that exists and 0xFFFFFFFE for one that
+// does not, so it is not a normalised success/failure.
 //
 // dmNew is left describing what is on screen now; on a failure the old mode goes
 // back first, so that is what it describes.
 HRESULT SetNewDisplay(DEVMODE &dmOld,DEVMODE &dmNew)
 {
-	LONG lResult = ChangeDisplaySettings(&dmNew, CDS_UPDATEREGISTRY);
+	// Ask first, apply second. CDS_UPDATEREGISTRY is the flag that also stores
+	// the mode, and a mode the driver refuses must not end up in the registry
+	// to come back at the next boot -- the rollback below only puts the *screen*
+	// back, it does not unsay what was written. CDS_TEST answers with the same
+	// DISP_CHANGE_* codes, so the caller still sees the driver's own answer
+	// (case 048 pins 0xFFFFFFFE for a mode no adapter has).
+	LONG lResult = ChangeDisplaySettings(&dmNew, CDS_TEST);
+
+	if (lResult == DISP_CHANGE_SUCCESSFUL)
+	{
+		lResult = ChangeDisplaySettings(&dmNew, CDS_UPDATEREGISTRY);
+	}
 
 	if (lResult == DISP_CHANGE_SUCCESSFUL)
 	{
@@ -59,71 +81,52 @@ HRESULT SetNewDisplay(DEVMODE &dmOld,DEVMODE &dmNew)
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-// "W1024" and its friends: the number that follows the letter, or the value it
-// already had when the letter is not in the line at all. The number ends at the
-// first character that is not a digit.
-static DWORD FieldAfter(PTSTR ptzCmd, TCHAR cField, DWORD dwCurrent)
-{
-	PTSTR ptz = UStrChr(ptzCmd, cField);
-
-	return ptz ? (DWORD) UStrToInt(ptz + 1) : dwCurrent;
-}
-
-// Change display setting
+// Set one mode by its four figures. The tray menu is the caller: its items name a
+// width, a height, a colour depth and a refresh rate, and nothing else on the
+// boot path asks for a mode change.
 //
-// The fields are letters the caller writes in any order: W width, H height,
-// B bits per pixel, F refresh rate, and T a wait in milliseconds. A letter that
-// is not there leaves that field alone, and only a field that actually differs
-// causes a mode change -- each is applied on its own, and the answers add up.
-HRESULT Disp(CoreContext& ctx, PTSTR ptzCmd)
+// The fields go in one at a time, in the order the old menu applied them, and the
+// answers add up -- a mode a driver will not take comes back as DISP_CHANGE_BADMODE
+// in the total rather than being smoothed into a plain failure. A figure of zero
+// means "leave this one alone".
+//
+// One at a time rather than one call with four fields, because that is what the
+// menu has always done and some drivers only accept a size and a depth that are
+// changed in separate calls.
+HRESULT ApplyDisplayMode(DWORD uWidth, DWORD uHeight, DWORD uBits, DWORD uHz)
 {
-	DEVMODE dmNew,dmOld,dmTmp;
+	DEVMODE dmOld;
+	DEVMODE dmNew;
 	HRESULT lResult = S_OK;
+
 	// The current mode, or there is nothing to base a partial change on: the
-	// fields the command does not name come from here, and reading them from an
+	// figures the caller does not name come from here, and reading them from an
 	// uninitialised stack frame is what /analyze complains about.
 	ZeroMemory(&dmOld, sizeof(dmOld));
 	if (!EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dmOld))
 	{
 		return (HRESULT) GetLastError();
 	}
-	dmTmp = dmOld;
 
-	UStrToUpper(ptzCmd);
-
-	dmTmp.dmPelsWidth        = FieldAfter(ptzCmd, 'W', dmOld.dmPelsWidth);
-	dmTmp.dmPelsHeight       = FieldAfter(ptzCmd, 'H', dmOld.dmPelsHeight);
-	dmTmp.dmBitsPerPel       = FieldAfter(ptzCmd, 'B', dmOld.dmBitsPerPel);
-	dmTmp.dmDisplayFrequency = FieldAfter(ptzCmd, 'F', dmOld.dmDisplayFrequency);
-
-	// T is a pause rather than a mode: "DISP T2000" waits before it returns.
+	if (uWidth && uHeight &&
+		((dmOld.dmPelsWidth != uWidth) || (dmOld.dmPelsHeight != uHeight)))
 	{
-		PTSTR ptzWait = UStrChr(ptzCmd, 'T');
-		if (ptzWait)
-		{
-			TimeDelay(UStrToInt(ptzWait + 1));
-		}
+		dmNew = dmOld;
+		dmNew.dmPelsWidth = uWidth;
+		dmNew.dmPelsHeight = uHeight;
+		lResult += SetNewDisplay(dmOld, dmNew);
 	}
-
-	dmNew = dmOld;
-	if ((dmTmp.dmPelsWidth != dmOld.dmPelsWidth)||
-		(dmTmp.dmPelsHeight != dmOld.dmPelsHeight))
+	if (uBits && (dmOld.dmBitsPerPel != uBits))
 	{
-		dmNew.dmPelsWidth = dmTmp.dmPelsWidth;
-		dmNew.dmPelsHeight = dmTmp.dmPelsHeight;
-		lResult = SetNewDisplay(dmOld,dmNew) + lResult;
+		dmNew = dmOld;
+		dmNew.dmBitsPerPel = uBits;
+		lResult += SetNewDisplay(dmOld, dmNew);
 	}
-
-	if (dmTmp.dmBitsPerPel != dmOld.dmBitsPerPel)
+	if (uHz && (dmOld.dmDisplayFrequency != uHz))
 	{
-		dmNew.dmBitsPerPel = dmTmp.dmBitsPerPel;		
-		lResult = SetNewDisplay(dmOld,dmNew) + lResult;
-	}
-
-	if (dmTmp.dmDisplayFrequency != dmOld.dmDisplayFrequency)
-	{
-		dmNew.dmDisplayFrequency = dmTmp.dmDisplayFrequency;
-		lResult = SetNewDisplay(dmOld,dmNew) + lResult;
+		dmNew = dmOld;
+		dmNew.dmDisplayFrequency = uHz;
+		lResult += SetNewDisplay(dmOld, dmNew);
 	}
 	return lResult;
 }
@@ -142,46 +145,6 @@ HRESULT Disp(CoreContext& ctx, PTSTR ptzCmd)
 // room for it. A removable drive with room, if one turns up first, is remembered
 // in ptzDrive[0]; a fixed one goes in ptzDrive[1] -- so the caller can tell a
 // "this one" answer from a "some fixed drive" one.
-BOOL GetPageFileDrive(PTSTR StartDrive, DWORD AppealSize, TCHAR ptzDrive[2])
-{
-	TCHAR tzDrives[MAX_NAME];
-	BOOL bFoundFixed = FALSE;
-	BOOL bFoundThis = FALSE;
-
-	GetLogicalDriveStrings(_NumOf(tzDrives), tzDrives);
-	UStrToUpper(StartDrive);
-	UStrToUpper(tzDrives);
-
-	for (PTSTR ptzRoot = tzDrives; *ptzRoot; ptzRoot += UStrLen(ptzRoot) + 1)
-	{
-		if (GetDiskFree(ptzRoot) <= (AppealSize + MD5Str_Len))
-		{
-			continue;                   // no room for a page file here
-		}
-
-		switch (MyGetDriveType(ptzRoot))
-		{
-		case DRIVE_REMOVABLE:
-			ptzDrive[0] = *ptzRoot;
-			break;
-		case DRIVE_FIXED:
-			ptzDrive[1] = *ptzRoot;
-			bFoundFixed = TRUE;
-			if (*ptzRoot >= *StartDrive)
-			{
-				bFoundThis = TRUE;
-			}
-			break;
-		}
-
-		if (bFoundThis)
-		{
-			break;
-		}
-	}
-
-	return bFoundThis ? TRUE : bFoundFixed;
-}
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -199,56 +162,8 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax);
 // search picks a fixed volume with room, falling back to a removable one, and
 // then the file is created and recorded in one step, because a page file Windows
 // does not know about is not one it will use.
-HRESULT Page(CoreContext& ctx, PTSTR ptzCmd)
-{
-	TCHAR tzPath[MAX_STR];
-	UINT uMin = 0;
-	UINT uMax = 0;
-	PTSTR p;
 
-	UStrCopy(tzPath, ptzCmd);
-
-	// "<path> <min> <max>", with the sizes optional. The path is what is left
-	// after the first space, and it is cut in this function's own copy rather
-	// than in the caller's line.
-	p = UStrChr(tzPath, ' ');
-	if (p)
-	{
-		PTSTR ptzMin = p + 1;
-
-		*p = 0;
-		uMin = UStrToInt(ptzMin);
-		p = UStrChr(ptzMin, ' ');
-		if (p)
-		{
-			*p++ = 0;
-			uMax = UStrToInt(p);
-		}
-	}
-	if (uMax < uMin)
-	{
-		uMax = uMin;
-	}
-	if (GetFreeMemo() >= uMax)
-	{
-		return S_OK;
-	}
-
-	// tzFound[0] is the removable volume the search settled on and tzFound[1]
-	// the fixed one; the answer is the index, so it picks between them directly.
-	{
-		TCHAR tzWanted[4] = {0};
-		TCHAR tzFound[2] = {0};
-
-		tzWanted[0] = tzPath[0];
-		tzWanted[1] = tzPath[1];
-		tzPath[0] = tzFound[GetPageFileDrive(tzWanted, uMax, tzFound)];
-	}
-
-	return CreatePageFileAt(tzPath, uMin, uMax);
-}
-
-// The page-file capability. Page() above is the text front end.
+// The page-file capability. Page() above is the legacy text front end.
 //
 // It makes the file through ntdll and records it where Windows looks for page
 // files, both in one step: a page file nobody recorded is not one the system
@@ -287,7 +202,13 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax)
 	{
 		return (HRESULT) GetLastError();
 	}
-	UStrCat(tzDos, tzFile);
+	// The device name and the path inside it. Both halves are bounded on their
+	// own; their sum is not, and the file name comes from the script -- so the
+	// combined length is checked rather than copied into the buffer.
+	if (!UStrCatTo(tzDos, tzFile))
+	{
+		return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+	}
 	UStrToWStr(wzPath, tzDos, MAX_PATH);
 
 	sPath.Length = (USHORT) (UWStrLen(wzPath) * sizeof(WCHAR));
@@ -330,9 +251,23 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax)
 			UStrPrintN(tzStr + i, (size_t) (_NumOf(tzStr) - (size_t) i),
 				TEXT("%s %d %d"), ptzPath, (int) uMin, (int) uMax);
 			i += (INT) UStrLen(tzStr + i);
-			tzStr[++i] = 0;
+			tzStr[++i] = 0;		// the second terminator of the pair
 		}
-		SHSetValue(HKEY_LOCAL_MACHINE, REG_MemMgr, REG_PageFile, REG_MULTI_SZ, tzStr, i * sizeof(TCHAR));
+		// i is the index of that second terminator, so the byte count is i + 1
+		// characters: writing i of them stored a MULTI_SZ with a single NUL --
+		// the class of bug F-01 fixed for REG_SZ, in the other string type.
+		{
+			LONG lResult = SHSetValue(HKEY_LOCAL_MACHINE, REG_MemMgr, REG_PageFile,
+				REG_MULTI_SZ, tzStr, (i + 1) * sizeof(TCHAR));
+
+			if (lResult != ERROR_SUCCESS)
+			{
+				// The file was created but Windows has not been told about it,
+				// which is not the thing that was asked for. SHSetValue hands
+				// back the error code itself, so that is what goes up the stack.
+				return (HRESULT) lResult;
+			}
+		}
 	}
 	return hResult;
 }
@@ -376,11 +311,11 @@ static BOOL ServWaitForState(SC_HANDLE hService, DWORD dwWanted)
 	}
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
-// The service capability. Serv() below is the text front end for it.
+// The service capability. Serv() below is the legacy text front end for it.
 //
-// bWait is the part that matters: starting a service without it returns as soon
-// as the request is accepted, not when the service is RUNNING. A boot chain that
-// wants the second thing has to ask for the wait.
+// bWait is the part that matters: "net start", which the boot chain used to
+// run, returns once the service is RUNNING. Starting without waiting is a
+// different operation, and the chain has to ask for the wait explicitly.
 // Reading a service's status, creating an entry, and removing one. Everything
 // a caller can act on is in the SERVICE_STATUS the service manager hands back;
 // the rest is the service manager's own bookkeeping.
@@ -450,7 +385,7 @@ HRESULT DeleteServiceEntry(PCTSTR ptzName, BOOL bStopFirst)
 	}
 	{
 		// DELETE to remove it, STOP because stopping first is what the
-		// text form's "-stop-" switch does and the service manager refuses to
+		// reference's "-stop-" form does and the service manager refuses to
 		// delete a running one otherwise.
 		SC_HANDLE hService = OpenService(hManager, (PTSTR) ptzName,
 			DELETE | SERVICE_STOP | SERVICE_QUERY_STATUS);
@@ -488,9 +423,10 @@ HRESULT SetServiceState(PCTSTR ptzName, BOOL bStop, BOOL bWait)
 
 	if (!hService)
 	{
-		// A service that is not there answers 1060, which is what the text form
-		// reports. Answering S_FALSE here would be a difference that only shows
-		// up when a script checks the code.
+		// A service that is not there answers 1060, which is what the reference
+		// reports and what case 046 now pins. Answering S_FALSE here was a long
+		// standing difference the case matrix could not see, because no case
+		// touched SERV at all.
 		HRESULT hr = (HRESULT) GetLastError();
 		CloseServiceHandle(hManager);
 		return hr;
@@ -517,7 +453,7 @@ HRESULT SetServiceState(PCTSTR ptzName, BOOL bStop, BOOL bWait)
 		{
 			// The request was accepted but the service did not settle where it
 			// was asked to. The service manager's own code for "did not answer
-			// in time" is the honest answer; the text form documents no value
+			// in time" is the honest answer; the reference documents no value
 			// for -wait at all.
 			hr = (HRESULT) ERROR_SERVICE_REQUEST_TIMEOUT;
 		}
@@ -529,53 +465,13 @@ HRESULT SetServiceState(PCTSTR ptzName, BOOL bStop, BOOL bWait)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Start / stop a service or driver
 //
-// SERV [-wait] [start switch] [?result var] [!]<service name>
+// Reference syntax: SERV [-wait] [start switch] [?result var] [!]<service name>
 //
-// Only "-wait" and a leading "!" are read. The service is expected to exist, so
-// there is nothing for the "?result var" query form to do, and the start-type
-// switches apply to creating a service, which this command does not do; they
-// are skipped rather than rejected.
+// There is no service here before the call, so the "query" half of the
+// reference syntax is not implemented. The start-type switches only mean
+// something for SERV-create, which is not implemented either, so they are
+// skipped rather than rejected.
 //////////////////////////////////////////////////////////////////////////////////////////////////
-HRESULT Serv(CoreContext& ctx, PTSTR ptzCmd)
-{
-	UNREFERENCED_PARAMETER(ctx);
-
-	BOOL bWait = FALSE;
-
-	// Leading options. -wait asks for the service to reach a stable state
-	// before the command returns -- the whole point of the option, and what
-	// "net start" did in the chain this replaced. A leading '!' ends the scan
-	// and selects stop.
-	while ((*ptzCmd == ' ') || (*ptzCmd == '\t'))
-	{
-		ptzCmd++;
-	}
-	while (*ptzCmd == '-')
-	{
-		PTSTR ptzEnd = ptzCmd;
-		while (*ptzEnd && (*ptzEnd != ' ') && (*ptzEnd != '\t'))
-		{
-			ptzEnd++;
-		}
-		if (((UINT) (ptzEnd - ptzCmd) == 5) && (UStrCmpNI(ptzCmd, TEXT("-wait"), 5) == 0))
-		{
-			bWait = TRUE;
-		}
-		ptzCmd = ptzEnd;
-		while ((*ptzCmd == ' ') || (*ptzCmd == '\t'))
-		{
-			ptzCmd++;
-		}
-	}
-
-	BOOL bStop = (*ptzCmd == '!');
-
-	if (bStop)
-	{
-		ptzCmd++;
-	}
-	return SetServiceState(ptzCmd, bStop, bWait);
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -583,8 +479,8 @@ HRESULT Serv(CoreContext& ctx, PTSTR ptzCmd)
 // The FBWF cache size, from values rather than from the "P20 L32 H64" text:
 // a percentage of free memory, kept between the minimum and the maximum. A
 // percentage of 0 means "no percentage term at all" -- GetNewSize() below maps
-// the text-form "P0" onto 1 before it gets here, because a percentage below one
-// is taken as one.
+// the legacy "P0" onto 1 before it gets here, because that is what the
+// reference does with a percentage below one.
 //
 // GetNewSize() and Fbwf()/SetFbwfCache() all end up here, so the arithmetic
 // that decides how much write-filter cache a machine gets exists once.
@@ -606,6 +502,13 @@ static DWORD ClampToRange(DWORD dwValue, DWORD MIN, DWORD MAX)
 	}
 	return dwValue;
 }
+// The band the write-filter cache may live in, in megabytes, and what it gets
+// when the caller names neither end. All three were spelled MD5Str_Len, 1024
+// and 32 -- a digest length standing in for a size in megabytes.
+const DWORD c_fbwfMinMb = 16;
+const DWORD c_fbwfMaxMb = 1024;
+const DWORD c_fbwfDefaultMb = 32;
+
 DWORD FbwfCacheSize(DWORD part_mem, DWORD min_mem, DWORD max_mem,
 	DWORD MIN, DWORD MAX, DWORD DefSize)
 {
@@ -623,14 +526,14 @@ DWORD FbwfCacheSize(DWORD part_mem, DWORD min_mem, DWORD max_mem,
 		{
 			dwPercent = 50;
 		}
-		dwSize = (DWORD) (dwPercent * GetFreeMemo() / 100); // P% of free memory
+		dwSize = (DWORD) (dwPercent * GetFreeMemo() / 100); //可用内存的 P%
 	}
 
 	// Both ends are brought inside the range this cache may have, and a pair
 	// that arrived the wrong way round is swapped rather than rejected.
 	dwMin = ClampToRange(dwMin, MIN, MAX);
 	dwMax = ClampToRange(dwMax, MIN, MAX);
-	if (dwMax < dwMin)
+	if (dwMax < dwMin) //交换
 	{
 		DWORD dwSwap = dwMin;
 
@@ -657,31 +560,6 @@ DWORD FbwfCacheSize(DWORD part_mem, DWORD min_mem, DWORD max_mem,
 	return dwSize;
 }
 
-LONG GetNewSize(PTSTR ptzCmd,DWORD MIN, DWORD MAX, DWORD DefSize)
-{
-	DWORD part_mem;
-	DWORD min_mem;
-	DWORD max_mem;
-
-	UStrToUpper(ptzCmd);
-
-	// Same letters as DISP, and the same rule: the number follows the letter, and
-	// a letter that is not there leaves its field at 0.
-	part_mem = FieldAfter(ptzCmd, 'P', 0);
-	min_mem = FieldAfter(ptzCmd, 'L', 0);
-	max_mem = FieldAfter(ptzCmd, 'H', 0);
-
-	// "P0" means "no percentage term" to FbwfCacheSize, so it is turned into 1%
-	// here instead -- which is what makes P0 L64 H32 answer 32 rather than the
-	// band max.
-	if ((UStrChr(ptzCmd, 'P') != NULL) && (part_mem < 1))
-	{
-		part_mem = 1;
-	}
-
-	return (LONG) FbwfCacheSize(part_mem, min_mem, max_mem, MIN, MAX, DefSize);
-}
-
 // The write-filter capability both front ends end at: record the size the
 // service will read, then ask it to start. The value is what the service reads
 // when it comes up, which is why the two steps belong to one operation.
@@ -690,17 +568,23 @@ LONG GetNewSize(PTSTR ptzCmd,DWORD MIN, DWORD MAX, DWORD DefSize)
 #define FBWFSERVICE TEXT("FBWF")
 HRESULT ApplyFbwfCache(DWORD dwSize)
 {
-	SHSetValue(HKEY_LOCAL_MACHINE, FBWFKEY, FBWFVALUE, REG_DWORD, &dwSize, sizeof(dwSize));
+	// The value is what the service reads when it comes up, so a write that did
+	// not land means the service starts on the old threshold -- reporting the
+	// call as done would be saying "the cache is now this size" about a size
+	// nobody will use.
+	{
+		LONG lResult = SHSetValue(HKEY_LOCAL_MACHINE, FBWFKEY, FBWFVALUE, REG_DWORD,
+			&dwSize, sizeof(dwSize));
+
+		if (lResult != ERROR_SUCCESS)
+		{
+			return (HRESULT) lResult;
+		}
+	}
 	return SetServiceState(FBWFSERVICE, FALSE, FALSE);
 }
 //////////////////////////////////////////////////////////////////////////////////////
 
-
-HRESULT Fbwf(CoreContext& ctx, PTSTR ptzCmd)
-{
-	return ApplyFbwfCache((DWORD) GetNewSize(ptzCmd, MD5Str_Len, 1024, 32));
-}
-///////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////

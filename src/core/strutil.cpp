@@ -58,7 +58,7 @@ PTSTR UPathSplitName(PTSTR ptzPath)
 // text sits.
 //
 // One quirk is kept on purpose: the walk steps one character past the pair it
-// just rewrote. That is what the text form does, and because the replacement is
+// just rewrote. That is what the reference does, and because the replacement is
 // the same length the "skipped" character is the one already written over.
 PTSTR USplitStr(PTSTR ptzStr)
 {

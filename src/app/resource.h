@@ -25,7 +25,6 @@
 #define IDS_NewTempFolder               10016
 #define IDS_SaveToClipboard             10023
 #define IDS_MD5String                   10024
-#define IDS_Hotk                        10026
 #define ID_TRAY_HELP                   21121
 #define ID_1024_768_32_85               21122
 #define ID_1024_768_32_90               21123

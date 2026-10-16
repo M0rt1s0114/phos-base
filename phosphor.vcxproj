@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Release|Win32">
@@ -7,6 +7,17 @@
     </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <!-- Release plus the test hooks. Its own configuration rather than a
+         property on Release because the release binary must not contain the
+         hooks, and because that is where the analysis warnings get read. -->
+    <ProjectConfiguration Include="Release-Test|Win32">
+      <Configuration>Release-Test</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release-Test|x64">
+      <Configuration>Release-Test</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
@@ -32,16 +43,36 @@
     <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release-Test|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v142</PlatformToolset>
+    <UseOfMfc>false</UseOfMfc>
+    <UseOfAtl>false</UseOfAtl>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release-Test|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v142</PlatformToolset>
+    <UseOfMfc>false</UseOfMfc>
+    <UseOfAtl>false</UseOfAtl>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
     <OutDir>$(ProjectDir)build\$(Platform)\</OutDir>
     <IntDir>$(ProjectDir)build\obj\$(Platform)\</IntDir>
-    <!-- The product is phos.exe. The project file keeps the PECMD name
-         because the source tree it was split out of is still called that; only
-         the artifact matters to a boot entry point. -->
+    <!-- The product is phos.exe. -->
     <TargetName>phos</TargetName>
     <LinkIncremental>false</LinkIncremental>
     <GenerateManifest>false</GenerateManifest>
+  </PropertyGroup>
+  <!-- The test build gets its own output tree: it must never be mistaken for
+       the release binary, and both have to be able to exist at once. -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release-Test'">
+    <OutDir>$(ProjectDir)build\test\$(Platform)\</OutDir>
+    <IntDir>$(ProjectDir)build\obj\test\$(Platform)\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
@@ -89,6 +120,13 @@
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <SetChecksum>false</SetChecksum>
+      <!-- Off on purpose in the two Release configurations: /DEBUG:FULL puts
+           the build machine's source path into the RSDS record, and the
+           release image is built on a machine whose workspace directory is
+           named after this project's old codename. The crash record is text on
+           the trace channel, so nothing here needs a PDB. Release-Test keeps
+           it: that build never leaves this machine. -->
+      <GenerateDebugInformation>false</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -116,6 +154,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <SetChecksum>false</SetChecksum>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
     </Link>
     <!-- The resource compiler is not the C++ compiler and does not define
          _M_X64, so identity.h took the x86 branch and the x64 binary shipped a
@@ -125,10 +164,66 @@
       <PreprocessorDefinitions>_M_X64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release-Test|Win32'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;PHOS_TESTHOOKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level4</WarningLevel>
+      <DisableSpecificWarnings>4100;4706;6054;28159;28251;6335;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>true</SDLCheck>
+      <EnablePREfast>true</EnablePREfast>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <RegisterOutput>false</RegisterOutput>
+      <SubSystem>Windows</SubSystem>
+      <TargetMachine>MachineX86</TargetMachine>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <SetChecksum>false</SetChecksum>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release-Test|x64'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <EnableFiberSafeOptimizations>false</EnableFiberSafeOptimizations>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;PHOS_TESTHOOKS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level4</WarningLevel>
+      <DisableSpecificWarnings>4100;4706;6054;28159;28251;6335;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <SDLCheck>true</SDLCheck>
+      <EnablePREfast>true</EnablePREfast>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <RegisterOutput>false</RegisterOutput>
+      <SubSystem>Windows</SubSystem>
+      <TargetMachine>MachineX64</TargetMachine>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <SetChecksum>false</SetChecksum>
+    </Link>
+    <ResourceCompile>
+      <PreprocessorDefinitions>_M_X64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <!-- The area files are built as one translation unit. -->
     <ClCompile Include="src\app\unity.cpp" />
-    <ClCompile Include="src\core\digest.cpp" />
     <ClCompile Include="src\core\disk.cpp" />
     <ClCompile Include="src\core\encoding.cpp" />
     <ClCompile Include="src\core\memory.cpp" />
@@ -140,15 +235,8 @@
     <ClInclude Include="src\app\main.cpp" />
     <ClInclude Include="src\app\selfcheck.cpp" />
     <ClInclude Include="src\commands\dialog.cpp" />
-    <ClInclude Include="src\commands\fs.cpp" />
-    <ClInclude Include="src\commands\strs.cpp" />
-    <ClInclude Include="src\commands\files.cpp" />
-    <ClInclude Include="src\commands\encode.cpp" />
-    <ClInclude Include="src\commands\datetime.cpp" />
     <ClInclude Include="src\engine\condition.cpp" />
-    <ClInclude Include="src\engine\dispatch.cpp" />
     <ClInclude Include="src\engine\script.cpp" />
-    <ClInclude Include="src\engine\variables.cpp" />
     <ClInclude Include="src\platform\display.cpp" />
     <ClInclude Include="src\platform\fileops.cpp" />
     <ClInclude Include="src\platform\misc.cpp" />
@@ -163,7 +251,6 @@
     <ClInclude Include="src\lang\interp.cpp" />
     <ClInclude Include="src\lang\host.cpp" />
     <ClInclude Include="src\lang\run.cpp" />
-    <ClInclude Include="src\core\digest.h" />
     <ClInclude Include="src\core\disk.h" />
     <ClInclude Include="src\core\encoding.h" />
     <ClInclude Include="src\core\memory.h" />

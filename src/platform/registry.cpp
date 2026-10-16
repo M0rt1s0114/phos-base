@@ -2,7 +2,7 @@
 // The registry capabilities
 //
 // These are the operations themselves: a root key, a subkey, a value name and
-// typed data. Regi() below is the text front end for the same
+// typed data. Regi() below is the legacy text front end for the same
 // operations, and the language's reg.* verbs call these directly -- before
 // this, the language built "REGI HKLM\...\name=data" strings and handed them
 // back to the parser it is supposed to stop depending on.
@@ -54,9 +54,87 @@ HRESULT RegDeleteValue(HKEY hRoot, PCTSTR ptzSubKey, PCTSTR ptzName)
 	return (HRESULT) lResult;
 }
 
-HRESULT RegDeleteTree(HKEY hRoot, PCTSTR ptzSubKey)
+// Not the SDK's RegDeleteTree. That one appeared in Vista and is declared now
+// that _WIN32_WINNT says Windows 7, so this cannot keep the name; what it adds
+// is the guard below and the "already gone is fine" rule.
+// The mount points RegLoadHive created. A delete that reaches one of these
+// writes through to a real installation's hive on disk, and a reboot does not
+// put it back -- so the guard below wants the caller to have said `force`.
+// A failed load is not recorded and an unload forgets.
+static const UINT c_maxLoadedHives = 16;
+static TCHAR s_loadedHives[c_maxLoadedHives][MAX_NAME];
+static UINT  s_loadedHiveCount = 0;
+
+static VOID RememberLoadedHive(PCTSTR ptzMount)
 {
-	LONG lResult = SHDeleteKey(hRoot, ptzSubKey);
+	if ((s_loadedHiveCount < c_maxLoadedHives) && UStrCopyTo(s_loadedHives[s_loadedHiveCount], ptzMount))
+	{
+		s_loadedHiveCount++;
+	}
+}
+
+static VOID ForgetLoadedHive(PCTSTR ptzMount)
+{
+	for (UINT i = 0; i < s_loadedHiveCount; i++)
+	{
+		if (!UStrCmp(s_loadedHives[i], ptzMount))
+		{
+			s_loadedHiveCount--;
+			UStrCopyTo(s_loadedHives[i], s_loadedHives[s_loadedHiveCount]);
+			s_loadedHives[s_loadedHiveCount][0] = 0;
+			return;
+		}
+	}
+}
+
+// Is this subkey the mount point of a loaded hive, or something under one?
+BOOL RegIsLoadedHive(PCTSTR ptzSubKey)
+{
+	UINT uLen = UStrLen(ptzSubKey);
+
+	for (UINT i = 0; i < s_loadedHiveCount; i++)
+	{
+		UINT uName = UStrLen(s_loadedHives[i]);
+
+		if ((uName != 0) && (uLen >= uName) &&
+			(UStrCmpNI(s_loadedHives[i], ptzSubKey, uName) == 0) &&
+			((ptzSubKey[uName] == 0) || (ptzSubKey[uName] == '\\')))
+		{
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+HRESULT RegDeleteTreeGuarded(HKEY hRoot, PCTSTR ptzSubKey, BOOL bForce)
+{
+	LONG lResult;
+
+	// An empty subkey is the root itself: SHDeleteKey(HKLM, "") walks
+	// everything underneath HKLM. The subkey arrives from a script, and a
+	// script that ends up with an empty one is a script that expanded a
+	// variable to nothing -- "REGI HKLM\%&k%\" with k unset.
+	if (!ptzSubKey || !ptzSubKey[0])
+	{
+		return E_INVALIDARG;
+	}
+
+	// A key directly under a root is one call away from taking a whole branch
+	// with it: SHDeleteKey(HKLM, "SOFTWARE") is all of SOFTWARE. Two levels
+	// are the price of a delete that a script can be sure it meant.
+	if (!UStrChr(ptzSubKey, '\\'))
+	{
+		return E_INVALIDARG;
+	}
+
+	// And a hive reg.load_hive attached goes further than this machine: the
+	// write lands in somebody's real installation.
+	if (RegIsLoadedHive(ptzSubKey) && !bForce)
+	{
+		return HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);
+	}
+
+	lResult = SHDeleteKey(hRoot, ptzSubKey);
 
 	if ((lResult == ERROR_SUCCESS) || (lResult == ERROR_FILE_NOT_FOUND) ||
 		(lResult == ERROR_PATH_NOT_FOUND))
@@ -87,16 +165,31 @@ HRESULT RegQueryValueRaw(HKEY hRoot, PCTSTR ptzSubKey, PCTSTR ptzName,
 }
 
 // Loading an offline hive and taking it back down. The mount name is a bare
-// key name under HKLM. The text-command dialect has no command for this at all,
-// which is why rewriting a boot entry has always meant shelling out to reg.exe.
-// This is a new capability rather than a moved one.
+// key name under HKLM. The legacy dialect has no command for this at all --
+// which is why the test rig used to shell out to reg.exe to rewrite a boot
+// entry, and why this is a new capability rather than a moved one.
 //
 // It needs SeBackup/SeRestore, so it works as SYSTEM in the PE and not as an
 // ordinary user.
 HRESULT RegLoadHive(PCTSTR ptzFile, PCTSTR ptzMount)
 {
+	// Turn the two privileges on first. The token holds them already in a PE,
+	// but they start disabled, and RegLoadKey answers ERROR_PRIVILEGE_NOT_HELD
+	// rather than enabling them for you -- which reads like a permission problem
+	// when it is only a switch nobody flipped.
+	//
+	// Priv() lives in display.cpp, which the area split placed after this file.
+	// The build is one translation unit, so a declaration is enough.
+	HRESULT Priv(PCTSTR ptzName);
+	Priv(SE_BACKUP_NAME);
+	Priv(SE_RESTORE_NAME);
+
 	LONG lResult = RegLoadKey(HKEY_LOCAL_MACHINE, (PTSTR) ptzMount, ptzFile);
 
+	if (lResult == ERROR_SUCCESS)
+	{
+		RememberLoadedHive(ptzMount);
+	}
 	return (lResult == ERROR_SUCCESS) ? S_OK : (HRESULT) lResult;
 }
 
@@ -104,6 +197,10 @@ HRESULT RegUnloadHive(PCTSTR ptzMount)
 {
 	LONG lResult = RegUnLoadKey(HKEY_LOCAL_MACHINE, (PTSTR) ptzMount);
 
+	if (lResult == ERROR_SUCCESS)
+	{
+		ForgetLoadedHive(ptzMount);
+	}
 	return (lResult == ERROR_SUCCESS) ? S_OK : (HRESULT) lResult;
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -112,148 +209,15 @@ HRESULT RegUnloadHive(PCTSTR ptzMount)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // REGI <root>\<subkey>\<name>[=<data>]
 //
-// The '=' is what makes it a write. Without one the text form wants a
+// The '=' is what makes it a write. Without one the reference wants a
 // destination variable (a read) or an operator (a delete); with neither it
-// answers E_INVALIDARG -- a bare path must not quietly delete something. The
-// first '\' separates the root from the rest, and the last '\' in the rest
-// separates the subkey from the value name.
+// answers E_INVALIDARG -- a bare path must not quietly delete, which is what
+// difference 005 was. The first '\' separates the root from the rest, and the
+// last '\' in the rest separates the subkey from the value name.
 //
 // The text is copied into local buffers rather than cut up where it stands: the
 // caller's line already has a trace copy of its own, but nothing here needs to
 // write into it.
-HRESULT Regi(CoreContext& ctx, PTSTR ptzCmd)
-{
-	TCHAR tzRoot[MAX_NAME];
-	TCHAR tzSubKey[MAX_STR];
-	TCHAR tzData[MAX_STR] = {0};
-	BOOL bWrite = FALSE;
-
-	PTSTR ptzSplit = UStrChr(ptzCmd, '\\');
-	if (!ptzSplit)
-	{
-		return E_INVALIDARG;
-	}
-	// The root name, checked against the buffer it goes into: the count handed
-	// to UStrCopyN is how much to copy, not how much room there is, so a long
-	// root name ran over the end of tzRoot.
-	if (((size_t) (ptzSplit - ptzCmd) + 1) > _NumOf(tzRoot))
-	{
-		return E_INVALIDARG;
-	}
-	UStrCopyN(tzRoot, ptzCmd, (UINT) (ptzSplit - ptzCmd) + 1);
-
-	HKEY hKey = RegRootFromName(tzRoot);
-	if (!hKey)
-	{
-		return E_INVALIDARG;
-	}
-
-	// The '=' splits the value name from the data. An empty data part is still a
-	// write rather than a query -- the boot configuration ends wallpaper.ini
-	// with exactly that form -- and the write is a removal, at the end of this
-	// function.
-	UStrCopy(tzSubKey, ptzSplit + 1);
-	ptzSplit = UStrChr(tzSubKey, '=');
-	if (ptzSplit)
-	{
-		*ptzSplit++ = 0;
-		UStrCopy(tzData, UStrTrim(ptzSplit));
-		bWrite = TRUE;
-	}
-
-	ptzSplit = UStrRChr(tzSubKey, '\\');
-	if (!ptzSplit)
-	{
-		return E_INVALIDARG;
-	}
-	*ptzSplit++ = 0;
-
-	// The value name stays a pointer into tzSubKey, which this function owns.
-	// Registry value names are longer than any fixed name buffer we keep.
-	PTSTR ptzValue = ptzSplit;
-
-	if (!bWrite)
-	{
-		PTSTR ptzVar;
-
-		// "!" where the value name would be means "the whole subkey".
-		if ((ptzValue[0] == '!') && (ptzValue[1] == 0))
-		{
-			return RegDeleteTree(hKey, tzSubKey);
-		}
-
-		// Read form: "REGI <key>,<variable>". The variable says where the value
-		// goes, and "&" makes it local exactly as it does everywhere else in this
-		// dialect. Only a string is readable this way -- the text form answers
-		// E_INVALIDARG for a DWORD -- so the type is checked before the value is
-		// handed over.
-		ptzVar = UStrChr(ptzValue, ',');
-		if (ptzVar)
-		{
-			TCHAR tzValueData[MAX_STR] = {0};
-			DWORD dwType = 0;
-			DWORD cbData = sizeof(tzValueData);
-			HRESULT hr;
-
-			*ptzVar++ = 0;
-			hr = RegQueryValueRaw(hKey, tzSubKey, ptzValue, &dwType, tzValueData, &cbData);
-			if (hr != S_OK)
-			{
-				return hr;
-			}
-			if (dwType != REG_SZ)
-			{
-				return E_INVALIDARG;
-			}
-			return PeVar::Set(ptzVar, tzValueData) ? S_OK : S_FALSE;
-		}
-
-		return E_INVALIDARG;
-	}
-
-	if (tzData[0] == '#')
-	{
-		DWORD dwData = UStrToInt(tzData + 1);
-
-		return RegSetValue(hKey, tzSubKey, ptzValue, REG_DWORD, &dwData, sizeof(DWORD));
-	}
-
-	if (tzData[0] == '@')
-	{
-		// "@49 50 51" is the bytes 49 / 50 / 51 in decimal, space separated.
-		BYTE bData[MAX_PATH];
-		UINT uByte = 0;
-		PTSTR ptzByte = tzData + 1;
-
-		do
-		{
-			PTSTR ptzNext;
-
-			bData[uByte++] = (BYTE) UStrToInt(ptzByte);
-			ptzNext = UStrChr(ptzByte, ' ');
-			if (!ptzNext)
-			{
-				break;
-			}
-			ptzByte = ptzNext + 1;
-		}
-		while (uByte < _NumOf(bData));
-
-		return RegSetValue(hKey, tzSubKey, ptzValue, REG_BINARY, bData, uByte);
-	}
-
-	// An empty right-hand side removes the value rather than storing an empty
-	// string, and it answers success either way. The only way to see what
-	// happened is to read the value back: it is not there afterwards. Handing
-	// SHSetValue no data at all is not the same thing -- that stores an empty
-	// value instead of removing one.
-	if (tzData[0] == 0)
-	{
-		return RegDeleteValue(hKey, tzSubKey, ptzValue);
-	}
-
-	return RegSetValue(hKey, tzSubKey, ptzValue, REG_SZ, tzData, UStrLen(tzData) * sizeof(TCHAR));
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -333,11 +297,43 @@ HRESULT SetEnvironment(PTSTR ptzEnv, BOOL bSystem = FALSE,BOOL bInit = FALSE)
 		if (bSystem)
 		{
 			// The machine and user keys, so the value is there for the next
-			// process and not only for this one.
-			UStrPrint(tzStr, TEXT("HKLM\\%s\\%s\\%s"),Session_Manager,Text_Environment,ptzEnv);
-			Regi(g_ctx, tzStr);      // machine-wide
-			UStrPrint(tzStr, TEXT("%s\\%s\\%s"),hKCU,Text_Environment,ptzEnv);
-			Regi(g_ctx, tzStr);      // and the user's
+			// process and not only for this one. The name is the part before the
+			// '=', and the write goes straight to the two keys -- the text form
+			// this used to go through (REGI with a "root\key\name=value" line) is
+			// gone with the dialect it belonged to.
+			PTSTR ptzEq = UStrChr(ptzEnv, '=');
+
+			if (ptzEq)
+			{
+				TCHAR tzName[MAX_NAME];
+				PTSTR ptzValue = ptzEq + 1;
+				DWORD cbValue = (DWORD) ((UStrLen(ptzValue) + 1) * sizeof(TCHAR));
+				HRESULT hrKey;
+
+				// A name that cannot fit is refused rather than cut short: half a
+				// name is a different variable, and the write would still report
+				// success.
+				if ((UINT) (ptzEq - ptzEnv) >= _NumOf(tzName))
+				{
+					return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+				}
+				UStrCopyN(tzName, ptzEnv, (UINT) (ptzEq - ptzEnv) + 1);
+				UStrPrint(tzStr, TEXT("%s\\%s"), Session_Manager, Text_Environment);
+				hrKey = RegSetValue(HKEY_LOCAL_MACHINE, tzStr, tzName, REG_SZ, ptzValue, cbValue);
+				if (hrKey == S_OK)
+				{
+					hrKey = RegSetValue(HKEY_CURRENT_USER, Text_Environment, tzName, REG_SZ, ptzValue, cbValue);
+				}
+				// The registry half is what a *later* process reads, and the
+				// process environment below is what this one and its children
+				// read. A failure in either is worth reporting; the caller that
+				// asked for both gets the one that failed. The value is a Win32
+				// code rather than a signed HRESULT, so "not S_OK" is the test.
+				if (hrKey != S_OK)
+				{
+					hResult = hrKey;
+				}
+			}
 		}
 
 		PTSTR ptzValue = UStrChr(ptzEnv, '=');
@@ -347,7 +343,10 @@ HRESULT SetEnvironment(PTSTR ptzEnv, BOOL bSystem = FALSE,BOOL bInit = FALSE)
 			// string, which the callers that pass one use only for the keys
 			// written just above.
 			*ptzValue++ = 0;
-			hResult = SetEnvironmentVariable(ptzEnv, ptzValue) ? S_OK : S_FALSE;
+			if (!SetEnvironmentVariable(ptzEnv, ptzValue) && (hResult == S_OK))
+			{
+				hResult = S_FALSE;
+			}
 		}
 	}
 
@@ -362,133 +361,18 @@ HRESULT SetEnvironment(PTSTR ptzEnv, BOOL bSystem = FALSE,BOOL bInit = FALSE)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-///////////////////////////////////////////////////
-// Where ENVI and SET put their value
-//
-//   ENVI  name=value    the process environment, unless ENVI^ ForceLocal=1
-//   ENVI &name=value    a PE variable, whatever the mode says
-//   ENVI $name=value    system level: registry plus the environment
-//   SET   name=value    always a PE variable, created local
-//
-// The two halves never touch each other's storage, so a script can keep them
-// apart instead of guessing which layer a name ended up in. That separation is
-// the whole point of the prefix system.
-///////////////////////////////////////////////////
-static HRESULT EnviSwitch(PTSTR ptzCmd)
-{
-	// ENVI^ ForceLocal=1. Only the scope switch is implemented so far; the
-	// expansion modes that go with EnviMode are not.
-	PTSTR ptzName = UStrTrim(ptzCmd);
-	PTSTR ptzValue = UStrChr(ptzName, '=');
+// The two-layer variable system -- a process value for children, and a stored one
+// for the machine -- is `env.set` now; the ENVI/SET spelling, and the PE-variable
+// prefix system they were split across, went with the text dialect.
+//////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// The logo dialog's layered-window call needs no fallback here: the whole
+// hand-loaded-pointer dance that used to live at this spot only ran on SDKs that
+// did not define LWA_COLORKEY, and this toolchain always does.
 
-	if (!ptzValue)
-	{
-		return S_OK;
-	}
-	*ptzValue++ = 0;
-	UStrTrim(ptzName);
 
-	if (!UStrCmpI(ptzName, TEXT("ForceLocal")))
-	{
-		PeVar::SetForceLocal(UStrToInt(UStrTrim(ptzValue)) != 0);
-	}
-	return S_OK;
-}
 
-HRESULT Envi(CoreContext& ctx, PTSTR ptzCmd)
-{
-	BOOL bSys;
-	PTSTR ptzName;
-	PTSTR ptzValue;
 
-	if (*ptzCmd == '^')
-	{
-		return EnviSwitch(ptzCmd + 1);
-	}
 
-	bSys = (*ptzCmd == '$');
-	ptzCmd += bSys ? 1 : 0;
 
-	if (PeVar::IsPeName(ptzCmd) || ((!bSys) && PeVar::ForceLocal()))
-	{
-		ptzName = UStrTrim(ptzCmd);
-		ptzValue = UStrChr(ptzName, '=');
-		if (!ptzValue)
-		{
-			return S_OK;		// query forms come with the rest of the surface
-		}
-		*ptzValue++ = 0;
-		UStrTrim(ptzValue);
-		UStrTrim(ptzName);
-
-		if (PeVar::IsPeName(ptzName))
-		{
-			return PeVar::Set(ptzName, ptzValue) ? S_OK : S_FALSE;
-		}
-
-		// ForceLocal turned a bare name into a PE variable.
-		TCHAR tzName[MAX_NAME];
-
-		if ((UStrLen(ptzName) + 3) >= _NumOf(tzName))
-		{
-			return E_INVALIDARG;
-		}
-		UStrPrint(tzName, TEXT("&&%s"), ptzName);
-		return PeVar::Set(tzName, ptzValue) ? S_OK : S_FALSE;
-	}
-
-	return SetEnvironment(ptzCmd,bSys,((!ptzCmd) && bSys));
-}
-///////////////////////////////////////////////////
-//Set a PE variable
-HRESULT SetVar(CoreContext& ctx, PTSTR ptzCmd)
-{
-	// SET is ENVI & by definition: always a PE variable, never the environment.
-	// A bare name becomes a local; explicit &, && and &:: prefixes win.
-	PTSTR ptzName;
-	PTSTR ptzValue;
-	TCHAR tzName[MAX_NAME];
-
-	if (*ptzCmd == '-')
-	{
-		return S_OK;			// SET-def and friends come later
-	}
-
-	ptzName = ptzCmd;
-	ptzValue = UStrChr(ptzName, '=');
-	if (!ptzValue)
-	{
-		return S_OK;
-	}
-	*ptzValue++ = 0;
-	UStrTrim(ptzValue);
-	ptzName = UStrTrim(ptzName);
-
-	if (PeVar::IsPeName(ptzName))
-	{
-		return PeVar::Set(ptzName, ptzValue) ? S_OK : S_FALSE;
-	}
-
-	if ((UStrLen(ptzName) + 3) >= _NumOf(tzName))
-	{
-		return E_INVALIDARG;
-	}
-	UStrPrint(tzName, TEXT("&&%s"), ptzName);
-	if (!PeVar::Set(tzName, ptzValue))
-	{
-		return S_FALSE;
-	}
-	// A bare name is written to the environment as well. That is not in the
-	// documentation, but it is observable: FlashPic.WCS is on the PE's own boot
-	// path, it does "set FlashPic=Logo%RanPic%.jpg" and then uses
-	// "%FlashPic%" - an expansion that only ever consults the environment - and
-	// the text form resolves it. The &-prefixed forms stay PE-only, which is
-	// what the prefix is for.
-	{
-		TCHAR tzPair[MAX_STR];
-		UStrPrint(tzPair, TEXT("%s=%s"), ptzName, ptzValue);
-		SetEnvironment(tzPair, FALSE, FALSE);
-	}
-	return S_OK;
-}
-///////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

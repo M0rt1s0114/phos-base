@@ -1,111 +1,46 @@
-﻿// Put this module's own help entry into the Start Menu. The label comes from the
-// HelpLabel table and the target is this executable, so the entry is a link to us;
-// the label's %StartMenu% is expanded on the way.
-void SetMeOnTopMenu(void)
-{
-	TCHAR tzModule[MAX_STR];
-	TCHAR tzLabel[MAX_NAME];
-	TCHAR tzLink[MAX_STR];
-
-	GetModuleFileName(NULL, tzModule, _NumOf(tzModule));
-	UINT16ToUStr(tzLabel, HelpLabel, _NumOf(HelpLabel));
-	UStrPrint(tzLink, TEXT("%s%s"), tzLabel, tzModule);
-	ExpandEnvironmentStrings(tzLink, tzModule, _NumOf(tzModule));
-	Link(g_ctx, tzModule);
-}
+// Put this module's own help entry into the Start Menu. The label comes from the
+// HelpLabel and the target is this executable, so the entry is a link to us; the
+// label's %StartMenu% is expanded on the way.
+//
+// The shortcut is made through the capability rather than through the text LINK
+// this used to spell out: that form packed the two pieces into one
+// "<shortcut>,<target>" line.
 ///////////////////////////////////////////////////////////////////////////////
 
 
 ///////////////////////////////////////////////////////////////////////////////
 // Get User SHELL
 //////////////////////////////////////////////////////////////////////////////////////////////////
-// HIDE - hide the process
-//
-// Nothing to parse: it takes no arguments, and the whole
-// command is the call. The launch path used the same entry when it took over as
-// the shell.
-//
-// The operation that gave the command its name walked kernel structures reached
-// through \Device\PhysicalMemory and unlinked the process from the
-// active-process list. That path stops at its first test, "major version == 5",
-// on anything past Windows XP, so it never runs on a supported system. Instead
-// of carrying several hundred lines of unreachable code, the command stays
-// (scripts call it) and returns success without doing anything.
-//////////////////////////////////////////////////////////////////////////////////////////////////
-HRESULT Hide(CoreContext& ctx, PTSTR ptzCmd)
-{
-	UNREFERENCED_PARAMETER(ctx);
-	UNREFERENCED_PARAMETER(ptzCmd);
-	return S_OK;
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-// The shell-registration capability. Shel() below is the text front end.
+// The shell-registration capability.
 //
 // This deliberately does NOT start the shell. MainThread already exists for
 // that job: it waits for this registry value and then keeps whatever it names
 // alive, restarting it whenever it goes missing. Starting it here as well looks
 // harmless and is not -- that thread's loop leaves as soon as it sees the shell
 // running, so a shell started here that dies later is never brought back. In
-// a real image a driver install step partway through the boot kills it, and the
+// the shipped image the driver install in Post\Inidrive.phos kills it, and the
 // desktop never appears.
 HRESULT SetSystemShell(PCTSTR ptzShell)
 {
-	// The shell path is written only when both flags are set. Folding the two into
-	// the pointer with DWORD arithmetic truncates the address on x64, and a NULL
-	// data pointer is not the same thing as not writing: SHSetValue has no idea
-	// the caller meant "nothing".
+	// Upstream wrote the shell path only when both flags were set, by folding
+	// them into the pointer with DWORD arithmetic. That truncates the address on
+	// x64, and a NULL data pointer is not the same thing as not writing:
+	// SHSetValue has no idea the caller meant "nothing".
 	BOOL bSetShell;
 	bSetShell = bRealBoot;
 
 	return (SHSetValue(HKEY_LOCAL_MACHINE,
-		PELOGON,
+		PHOS_STATE,
 		PESHELL,
 		REG_SZ,
 		bSetShell ? (void *) ptzShell : NULL,
-		bSetShell ? UStrLen((PTSTR) ptzShell) * sizeof(TCHAR) : 0) == ERROR_SUCCESS) ? S_OK : S_FALSE;
+		bSetShell ? (UStrLen((PTSTR) ptzShell) + 1) * sizeof(TCHAR) : 0) == ERROR_SUCCESS) ? S_OK : S_FALSE;
 }
 
-HRESULT Shel(CoreContext& ctx, PTSTR ptzCmd)
-{
-	// SHEL [-user|-sys] [-shel:<command>] <file|command>
-	//
-	// The switches are recognised and skipped: SHEL runs the file or command it
-	// is given.
-	while (ptzCmd[0] == '-')
-	{
-		PTSTR ptzNext = UStrChr(ptzCmd, ' ');
-		if (!ptzNext)
-		{
-			break;			// a switch with no shell after it
-		}
-		if (!UStrCmpNI(ptzCmd, TEXT("-shel:"), 6))
-		{
-			PTSTR ptzQuote = UStrChr(ptzCmd, '"');
-			PTSTR ptzClose = ptzQuote ? UStrChr(ptzQuote + 1, '"') : NULL;
-			if (ptzClose)
-			{
-				ptzNext = ptzClose + 1;
-			}
-		}
-		ptzCmd = UStrTrim(ptzNext);
-	}
-
-	// The password form -- SHEL <shell>,<password>[,retries] -- is gone: a PE is a
-	// maintenance environment, so a lock on it only ever locks the maintainer out.
-	//
-	// A config that still passes one is told rather than having the argument
-	// ignored: ignoring it would leave the author believing a door is locked while
-	// it stands open. The human-readable explanation lives in the migration skill;
-	// this is the failure.
-	if (UStrChr(ptzCmd, ',') != NULL)
-	{
-		return E_INVALIDARG;
-	}
-	return SetSystemShell(ptzCmd);
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -116,9 +51,9 @@ HRESULT Shel(CoreContext& ctx, PTSTR ptzCmd)
 //
 // The answer is 0 whenever anything was looked at. The accumulator is the reason:
 // it starts at S_FALSE rather than at zero, and AddFontResource never subtracts,
-// so "found nothing to load" comes out as 0 as well. The three answers this
-// shape produces -- a folder of real fonts, a folder that is not there at all,
-// and the drive-walking form -- are 0, 2 and 0.
+// so "found nothing to load" comes out as 0 as well. Case 051 pins the three
+// answers this shape produces -- a folder of real fonts, a folder that is not
+// there at all, and the drive-walking form -- as 0, 2 and 0.
 HRESULT RegFont(PTSTR tzPath)
 {
 	WIN32_FIND_DATA fd;
@@ -126,7 +61,13 @@ HRESULT RegFont(PTSTR tzPath)
 	HRESULT hResult = S_FALSE;
 	HANDLE hFind;
 
-	UStrCopy(tzFolder, tzPath);
+	// The caller passes a spec that fits MAX_PATH, and a folder that does not
+	// fit is refused rather than cut down: a shortened folder names a different
+	// place to look for fonts.
+	if (!UStrCopyTo(tzFolder, tzPath))
+	{
+		return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+	}
 	UDirSplitPath(tzFolder);
 
 	hFind = FindFirstFile(tzPath, &fd);
@@ -155,90 +96,20 @@ HRESULT RegFont(PTSTR tzPath)
 //////////////////////////////////////////////////////////////////////////////////////////
 
 
-///////////////////////////////////////////////////////////
-//REG FONT
-// FONT <folder|spec>       load the fonts a folder (or a wildcard) matches
-// FONT \SubPath[,drive]    the same, once per drive, looking under
-//                          <drive>\SubPath\Fonts -- the comma names a drive to
-//                          start from, and drives below it in the alphabet are
-//                          the ones that get walked
-HRESULT Font(CoreContext& ctx, PTSTR ptzCmd)
-{
-	TCHAR tzPath[MAX_PATH];
-	HRESULT hResult = ERROR_FILE_NOT_FOUND;
-
-	if (ptzCmd[0] == '\\')
-	{
-		WCHAR tzDvr = 0;
-		PTSTR ptzStart = UStrChr(ptzCmd, ',');
-		// MAX_PATH, not MAX_NAME: the list is double-NUL terminated roots and
-		// eighty characters only holds nineteen drive letters.
-		TCHAR tzDrives[MAX_PATH];
-		PTSTR p;
-
-		if (ptzStart)
-		{
-			*ptzStart++ = 0;
-			UStrToUpper(ptzStart);
-			if (ptzStart[0])
-			{
-				tzDvr = *ptzStart;
-			}
-		}
-
-		ptzCmd++;
-		GetLogicalDriveStrings(_NumOf(tzDrives), tzDrives);
-		for (p = tzDrives; *p; p += UStrLen(p) + 1)
-		{
-			if (*p < tzDvr)
-			{
-				continue;
-			}
-
-			if ((UStrLen(p) + UStrLen(ptzCmd) + 7) >= _NumOf(tzPath))
-			{
-				continue;		// a name that cannot fit is not that folder
-			}
-			UStrPrint(tzPath, TEXT("%s%s\\Fonts"), p, ptzCmd);
-			if (UDirExist(tzPath))
-			{
-				UStrCatTo(tzPath, TEXT("\\*.*"));
-				hResult = RegFont(tzPath);
-			}
-		}
-	}
-	else
-	{
-		// A folder becomes a wildcard; anything else is taken as the spec itself.
-		// The folder it names has to exist, or there is nothing to walk and the
-		// answer stays "file not found".
-		if (UDirExist(ptzCmd))
-		{
-			UStrCat(ptzCmd, TEXT("\\*.*"));
-		}
-		if (!UStrCopyTo(tzPath, ptzCmd))
-		{
-			return E_INVALIDARG;
-		}
-		UDirSplitPath(ptzCmd);
-		if (UDirExist(ptzCmd))
-		{
-			hResult = RegFont(tzPath);
-		}
-	}
-
-	return hResult;
-}
+// The legacy front end for this was "FONT <folder|spec>", and its second form
+// ("FONT \SubPath[,drive]") walked every drive for <drive>\SubPath\Fonts. That
+// search left with the text dialect: `sys.font(path)` takes a file or a folder,
+// and a script that wants the drive walk names the drives itself.
 ////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Set WallPage
-// The wallpaper capability. Wall() below is the text front end for it.
+// The wallpaper capability.
 //
 // bRealBoot gates the data pointer: it is the "is this the author's own
 // binary" check, and when it is false the value is written with a NULL data
-// pointer. That is that behaviour; nothing in the boot chain
+// pointer. That is the reference's behaviour; nothing in the boot chain
 // depends on the difference, because bRealBoot is true for our build.
 HRESULT SetWallpaper(PCTSTR ptzPath)
 {
@@ -246,114 +117,40 @@ HRESULT SetWallpaper(PCTSTR ptzPath)
 	{
 		return S_FALSE;
 	}
+	// The stored value is what the desktop shows on the *next* logon; the call
+	// below is what shows it now. A machine where the write fails still gets its
+	// wallpaper, so the result is not checked -- deliberately, and this comment
+	// is the record of that being a decision rather than an oversight.
 	SHSetValue(HKEY_CURRENT_USER, TEXT("Control Panel\\Desktop"), TEXT("Wallpaper"),
-		REG_SZ, bRealBoot ? (const void *) ptzPath : NULL, UStrLen((PTSTR) ptzPath) * sizeof(TCHAR));
+		REG_SZ, bRealBoot ? (const void *) ptzPath : NULL,
+		bRealBoot ? (UStrLen((PTSTR) ptzPath) + 1) * sizeof(TCHAR) : 0);
 	SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, NULL, SPIF_SENDWININICHANGE | SPIF_UPDATEINIFILE);
 	return S_OK;
 }
 
-HRESULT Wall(CoreContext& ctx, PTSTR ptzCmd)
-{
-	return SetWallpaper(ptzCmd);
-}
-////////////////////////////////////
 
 
-/////////////////////////////////////
-// Set NumLock
-// NUMK <0|1> leaves the NumLock key in that state.
-//
-// The current state is read from the keyboard and the key is pressed only when
-// it differs: pressing it when it is already where it should be would flip it
-// the other way. The key itself is one keystroke either way, and the answer does
-// not depend on which way it went.
-HRESULT Numk(CoreContext& ctx, PTSTR ptzCmd)
-{
-	BOOL bWant = (UStrToInt(ptzCmd) != 0);
-	BYTE abKeyState[256];
-
-	if (!GetKeyboardState(abKeyState))
-	{
-		return (HRESULT) GetLastError();
-	}
-	if ((bWant && !(abKeyState[VK_NUMLOCK] & 1)) ||
-		(!bWant && (abKeyState[VK_NUMLOCK] & 1)))
-	{
-		keybd_event(VK_NUMLOCK, 0x45, KEYEVENTF_EXTENDEDKEY, 0);
-		keybd_event(VK_NUMLOCK, 0x45, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0);
-	}
-	return S_OK;
-}
+// The legacy front end for this was "NUMK <0|1>". The capability is
+// `sys.numlock(on)`, which reads the keyboard and presses the key only when the
+// state differs -- pressing it when it is already right would flip it the other
+// way. Case 047 pins the answer.
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// The owner-info and startup-entry capabilities. Runs_Or_User() below is the
-// text front end for both.
-//
-// The USER command writes the registered owner and organisation; RUNS
-// only ever adds an entry, and removes one with REGI -- which is why the
-// language gets an explicit remove_run rather than a flag on add_run.
-HRESULT SetOwnerInfo(PCTSTR ptzOwner, PCTSTR ptzOrg)
-{
-	SHSetValue(HKEY_LOCAL_MACHINE, UserKey, TEXT("RegisteredOwner"), REG_SZ,
-		(void *) ptzOwner, UStrLen((PTSTR) ptzOwner) * sizeof(TCHAR));
-	SHSetValue(HKEY_LOCAL_MACHINE, UserKey, TEXT("RegisteredOrganization"), REG_SZ,
-		(void *) ptzOrg, UStrLen((PTSTR) ptzOrg) * sizeof(TCHAR));
-	return S_OK;
-}
-
-HRESULT SetStartupEntry(PCTSTR ptzName, PCTSTR ptzCommand)
-{
-	return SHSetValue(HKEY_LOCAL_MACHINE, RunsKey, ptzName, REG_SZ,
-		(void *) ptzCommand, UStrLen((PTSTR) ptzCommand) * sizeof(TCHAR));
-}
-
-HRESULT RemoveStartupEntry(PCTSTR ptzName)
-{
-	return RegDeleteValue(HKEY_LOCAL_MACHINE, RunsKey, ptzName);
-}
-
-HRESULT Runs_Or_User(PTSTR ptzCmd,bool IsRun)
-{	
-	// The separator is a comma. A '*' is not one, and the text form answers
-	// S_FALSE for it, so no working script depends on one being accepted.
-	PTSTR ptzName = UStrChr(ptzCmd, ',');
-
-	if (ptzName)
-	{
-		*ptzName++ = 0;
-		if (IsRun)
-		{
-			SetStartupEntry(ptzName, ptzCmd);
-		}
-		else
-		{
-			SetOwnerInfo(ptzCmd, ptzName);
-		}
-		return S_OK;
-	}
-	else 
-	{
-		return S_FALSE;
-	}
-}
+// The registered owner, the organisation and the machine-wide Run key were
+// capabilities of their own for a while. SPEC-10 retired the verbs: each of them
+// is one `reg.set` on a key the caller can name (docs/SPEC-DECISIONS.md,
+// "准入判据"), so three functions and two verbs became the registry verb the
+// caller already had.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 ///////////////////////////////////////////////////
-HRESULT Runs(CoreContext& ctx, PTSTR ptzCmd)
-{
-	return Runs_Or_User(ptzCmd,true);
-}
 ///////////////////////////////////////////////////
 
 
 ///////////////////////////////////////////////////
-HRESULT User(CoreContext& ctx, PTSTR ptzCmd)
-{
-	return Runs_Or_User(ptzCmd,false);
-}
 ///////////////////////////////////////////////////
 
 
@@ -382,7 +179,7 @@ static BOOL ManageDriver(HDEVINFO hDev, SP_DEVINFO_DATA& sDev, DWORD dwAction)
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// The ramdisk capability. Ramd() below is the text front end.
+// The ramdisk capability.
 //
 // What it does: the new size is written where the Ramdriv driver reads it when
 // its device starts, and then the driver is made to start again -- the device is
@@ -395,16 +192,17 @@ static BOOL ManageDriver(HDEVINFO hDev, SP_DEVINFO_DATA& sDev, DWORD dwAction)
 // machine with no Ramdriv service -- this PE, for one -- answers "no" instead of
 // cycling a device class it knows nothing about.
 //
-// The working path cannot be exercised on a machine without that driver, so what
-// follows follows the documented behaviour: the two places that could spin
-// without an exit are bounded instead.
+// This is the one capability in this file whose working path the test rig cannot
+// reach (see D-SLICES.md), so what follows is a faithful re-expression rather
+// than a redesign: the only changes are the two places the reference could spin
+// without an exit, and both are marked.
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 #define RAMDISK_KEY   TEXT("System\\CurrentControlSet\\Services\\Ramdriv\\Parameters")
 #define RAMDISK_VALUE TEXT("DiskSize")
 #define RAMDISK_DRIVE TEXT("%ramdrv%")
 
 // The device to cycle. The class is enumerated to its end and the last device it
-// produced is the one kept, which is what the text form's enumeration left
+// produced is the one kept, which is what the reference's enumeration left
 // behind. FALSE means there is no such device here.
 static BOOL RamDiskDevice(HDEVINFO *phDev, SP_DEVINFO_DATA *pInfo)
 {
@@ -412,8 +210,9 @@ static BOOL RamDiskDevice(HDEVINFO *phDev, SP_DEVINFO_DATA *pInfo)
 	SP_DEVINFO_DATA sInfo;
 	BOOL bFound = FALSE;
 
-	// Bounded: a class that never appears would otherwise spin with no way out.
-	// RETRY attempts is what the counter in the text form was there for.
+	// The reference retried this call, but the counter it tested was never
+	// decremented, so a class that never appears meant a spin with no way out.
+	// RETRY attempts is what that counter was there for. (changed: bounded)
 	for (UINT uTry = 0; (uTry < RETRY) && (hDev == INVALID_HANDLE_VALUE); uTry++)
 	{
 		hDev = SetupDiGetClassDevs(&Ramdrive, NULL, NULL, 0);
@@ -497,9 +296,10 @@ static BOOL SetRamdSize(DWORD dwNewSize)
 		return FALSE;
 	}
 
-	// Down, then up again. The third wait is kept as the text form has it: after
-	// waiting for the letter to arrive it waits for the letter to be gone, and
-	// nothing here records why. It is bounded now rather than an unbounded spin.
+	// Down, then up again. The third wait is the reference's and is kept as it
+	// stands: after waiting for the letter to arrive it waits for the letter to
+	// be gone, and nothing in this repository records why. What it used to be
+	// was an unbounded spin, so it is bounded now. (changed: bounded)
 	if (RamDiskCycle(hDev, &sInfo, tzDrive, DICS_ENABLE, DICS_DISABLE, FALSE) &&
 		RamDiskCycle(hDev, &sInfo, tzDrive, DICS_DISABLE, DICS_ENABLE, TRUE))
 	{
@@ -512,6 +312,16 @@ static BOOL SetRamdSize(DWORD dwNewSize)
 			}
 		}
 	}
+	if (!bResult)
+	{
+		// The value is already written, so the machine would come up with a
+		// size nobody asked for. Put the old one back before answering no: the
+		// driver in memory keeps whatever it read at load time either way, so
+		// this only decides what the next boot does -- which is the part that
+		// outlives the mistake.
+		SHSetValue(HKEY_LOCAL_MACHINE, RAMDISK_KEY, RAMDISK_VALUE, REG_DWORD,
+			&dwOldSize, sizeof(dwOldSize));
+	}
 	SetupDiDestroyDeviceInfoList(hDev);
 	return bResult;
 }
@@ -522,21 +332,31 @@ static BOOL SetRamdSize(DWORD dwNewSize)
 //
 // The answer is the drive letter, not the resize: a size that was already right
 // succeeds without touching anything, and a machine with no such drive answers
-// "no" either way. That is the compatible shape.
+// "no" either way. That is the reference's shape.
 HRESULT SetRamDiskSizeMb(DWORD dwSizeMb)
 {
 	TCHAR tzDrive[MAX_NAME];
+	UINT64 uBytes = (UINT64) dwSizeMb * 1024 * 1024;
 
-	SetRamdSize(dwSizeMb * (1024 * 1024));
+	// The size is handed on as a 32-bit byte count, so a megabyte count that
+	// does not fit in one is refused rather than wrapping: wrapped, a huge
+	// request becomes a tiny ramdisk and still reports success.
+	if (uBytes > 0xFFFFFFFFULL)
+	{
+		return HRESULT_FROM_WIN32(ERROR_INVALID_PARAMETER);
+	}
+	// The resize's own answer used to be dropped: what came back was only "is
+	// there a ramdisk drive", so a write or a device cycle that failed reported
+	// the same success as one that worked -- and the registry value had been
+	// changed by then, so the next boot would use a size nobody asked for.
+	if (!SetRamdSize((DWORD) uBytes))
+	{
+		return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+	}
 	ExpandEnvironmentStrings(RAMDISK_DRIVE, tzDrive, _NumOf(tzDrive));
 	return DiskIsExist(tzDrive) ? S_OK : S_FALSE;
 }
 
-HRESULT Ramd(CoreContext& ctx, PTSTR ptzCmd)
-{
-	return SetRamDiskSizeMb((DWORD) GetNewSize(ptzCmd, 1, 512, 32));
-}
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1,6 +1,7 @@
 // The resource script: the tray menu, the string table, the two icons and the
 // version block at the end. The strings are Simplified Chinese, so the file is
-// written in GBK and says so to the resource compiler with the code page below.
+// written in GBK and says so to the resource compiler with the code page below --
+// the same page the rest of this project's Chinese text is in.
 #include "resource.h"
 #include "identity.h"
 #include <WinRes.h>
@@ -22,28 +23,28 @@ IDR_MENU1 MENU
 BEGIN
     POPUP "Phosphor_TrayPopupMenu"
     BEGIN
-        MENUITEM "Phosphor帮助说明(&A)...,phos.exe HELP", 21121
+        MENUITEM "Phosphor帮助说明(&A)...", 21121
         MENUITEM SEPARATOR
-        MENUITEM "分辨率1024X768 颜色32位 刷新率85,phos.exe DISP W1024H768B32F85", 21122
-        MENUITEM "分辨率1024X768 颜色32位 刷新率90,phos.exe DISP W1024H768B32F90", 21123
-        MENUITEM "分辨率1024X768 颜色16位 刷新率85,phos.exe DISP W1024H768B16F85", 21124
-        MENUITEM "分辨率1024X768 颜色16位 刷新率90,phos.exe DISP W1024H768B16F90", 21125
+        MENUITEM "分辨率1024X768 颜色32位 刷新率85", 21122
+        MENUITEM "分辨率1024X768 颜色32位 刷新率90", 21123
+        MENUITEM "分辨率1024X768 颜色16位 刷新率85", 21124
+        MENUITEM "分辨率1024X768 颜色16位 刷新率90", 21125
         MENUITEM SEPARATOR
-        MENUITEM "分辨率1280X1024 颜色32位 刷新率85,phos.exe DISP W1280H1024B32F85", 21126
-        MENUITEM "分辨率1280X1024 颜色32位 刷新率90,phos.exe DISP W1280H1024B32F90", 21127
-        MENUITEM "分辨率1280X1024 颜色16位 刷新率85,phos.exe DISP W1280H1024B16F85", 21128
-        MENUITEM "分辨率1280X1024 颜色16位 刷新率90,phos.exe DISP W1280H1024B16F90", 21129
+        MENUITEM "分辨率1280X1024 颜色32位 刷新率85", 21126
+        MENUITEM "分辨率1280X1024 颜色32位 刷新率90", 21127
+        MENUITEM "分辨率1280X1024 颜色16位 刷新率85", 21128
+        MENUITEM "分辨率1280X1024 颜色16位 刷新率90", 21129
         MENUITEM SEPARATOR
-        MENUITEM "分辨率800X600 颜色32位 刷新率85,phos.exe DISP W800H600B32F85", 21130
-        MENUITEM "分辨率800X600 颜色32位 刷新率75,phos.exe DISP W800H600B32F75", 21131
-        MENUITEM "分辨率800X600 颜色16位 刷新率85,phos.exe DISP W800H600B16F85", 21132
-        MENUITEM "分辨率800X600 颜色16位 刷新率75        Ctrl+Alt+A,phos.exe DISP W800H600B16F75", 21133
+        MENUITEM "分辨率800X600 颜色32位 刷新率85", 21130
+        MENUITEM "分辨率800X600 颜色32位 刷新率75", 21131
+        MENUITEM "分辨率800X600 颜色16位 刷新率85", 21132
+        MENUITEM "分辨率800X600 颜色16位 刷新率75        Ctrl+Alt+A", 21133
         MENUITEM SEPARATOR
-        MENUITEM "弹出所有的USB磁盘(&U),phos.exe EJEC U-", 21134
-        MENUITEM "弹出光驱中的光碟(&C),phos.exe EJEC C-", 21135
+        MENUITEM "弹出所有的USB磁盘(&U)", 21134
+        MENUITEM "弹出光驱中的光碟(&C)", 21135
         MENUITEM SEPARATOR
-        MENUITEM "清理临时文件夹的文件(&D)...,phos.exe TEMP DELETE", 21136
-        MENUITEM "重新设置临时文件目录(&S)...,phos.exe TEMP SETTING", 21137
+        MENUITEM "清理临时文件夹的文件(&D)...", 21136
+        MENUITEM "重新设置临时文件目录(&S)...", 21137
         MENUITEM SEPARATOR
         MENUITEM "隐藏/显示托盘图标(&H)      Ctrl+Alt+M", 21138
     END
@@ -79,7 +80,6 @@ BEGIN
     IDS_NewTempFolder       "选择新的临时文件夹。"
     IDS_SaveToClipboard     "结果已保存到粘帖板。"
     IDS_MD5String           "字符串MD5："
-    IDS_Hotk                "Ctrl + Alt + #0x41,phos.exe DISP W800H600B16F75"
 END
 
 // The version block and the common-controls manifest live in their own file,

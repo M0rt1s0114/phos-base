@@ -1,277 +1,135 @@
-﻿// The tray: its window, its icon, its menu and the hotkeys that reach them.
+// The tray: its window, its icon, its menu and the hotkeys that reach them.
 //
-// The keyboard-binding text is "<word>#<virtual key>", where the words are looked
-// for anywhere in the string and in any case. That is how HOTK and the IDS_Hotk
-// default are written, so the search is a substring search rather than a parse.
-static const struct
-{
-	PCTSTR	ptzWord;
-	UINT	uMod;
-} c_HotkeyWords[] =
-{
-	{ TEXT("ALT"),   MOD_ALT },
-	{ TEXT("CTRL"),  MOD_CONTROL },
-	{ TEXT("SHIFT"), MOD_SHIFT },
-	{ TEXT("WIN"),   MOD_WIN },
-};
+// Nothing here carries a command line any more. The menu items and the menu's own
+// two hotkeys used to be text -- "<mods>#<key>,<command line>" in the string
+// table, "<label>,<command line>" in the menu -- which made the tray a second
+// entry point for the text dialect, and the reason the dispatcher had to be asked
+// whether a string was a command or a program on every key press. A menu item is
+// a call below now, and a script's binding is a closure.
+//
+// The hotkey bindings this file keeps are interpreter values rather than text,
+// so the language's types are included here rather than leaned on from the unity
+// build's order, which puts the language after this file.
+#include "../lang/runtime.h"
 
-void GetKeyModAndKeyCode(PTSTR ptzHotk, UINT &Key_Mod, UINT &Hotkey)
-{
-	for (UINT i = 0; i < _NumOf(c_HotkeyWords); i++)
-	{
-		if (StrStrI(ptzHotk, c_HotkeyWords[i].ptzWord))
-		{
-			Key_Mod = Key_Mod | c_HotkeyWords[i].uMod;
-		}
-	}
+// What the menu items call. These live in files the unity build puts after this
+// one, which is why the prototypes are repeated here rather than shared through
+// a header -- the same way the rest of this build does it.
+HRESULT ShowAbout(VOID);
+HRESULT ApplyDisplayMode(DWORD uWidth, DWORD uHeight, DWORD uBits, DWORD uHz);
+HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB, BOOL bAsk);
+HRESULT TempClearFolder(VOID);
+HRESULT TempSetFolder(VOID);
 
-	{
-		PTSTR ptzKey = UStrChr(ptzHotk, '#');
-
-		if (ptzKey)
-		{
-			Hotkey = UStrToInt(ptzKey + 1);
-		}
-	}
-}
 //////////////////////////////////////////////////////////////////////////////////////////
 // How the hotkey ids are laid out. 0 and 1 belong to the menu's own two (Ctrl+Alt+M
-// and the IDS_Hotk default); the script's slots start at 2, and there are eight of
+// and the quick 800x600 mode); the script's slots start at 2, and there are eight of
 // them. WM_DESTROY clears the whole range, so the count of ids is not the count of
 // slots.
 #define HOTKEY_SLOTS		8
 #define HOTKEY_ID_BASE		2
 #define HOTKEY_ID_COUNT		10
+#define TRAY_HOTKEY_MENU	0	// Ctrl+Alt+M: open or close the tray menu
+#define TRAY_HOTKEY_MODE	1	// Ctrl+Alt+A: the mode the item beside it names
 //////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// Declared here rather than in a header, the way the rest of this unity build
-// shares prototypes: the dispatcher lives in engine/dispatch.cpp, which is
-// included after this file.
-HRESULT Command(PTSTR ptzCmd);
-BOOL IsCommandLine(PTSTR ptzCmd);
-
-// Run the text a hotkey or a tray menu item carries.
+// The tray menu's own two hotkeys, registered once per process (hence bReg).
 //
-// That text can be a dialect command line ("kill explorer.exe", "LOAD ...") or a
-// program command line ("notepad.exe"), and a configuration uses both forms. The
-// command table decides which it is, and the program line is the fallback, so
-// both writings work.
-static VOID RunBoundCommand(PTSTR ptzCmd)
-{
-	if (IsCommandLine(ptzCmd))
-	{
-		Command(ptzCmd);
-	}
-	else
-	{
-		Exec(g_ctx, ptzCmd);
-	}
-}
-//////////////////////////////////////////////////////////////////////////////////////////
-
-
-//////////////////////////////////////////////////////////////////////////////////////////
-// The tray menu's own hotkey: Ctrl+Alt+M, plus whatever IDS_Hotk names, written
-// as "<mods>#<key>,<command>". One registration per process, hence bReg.
+// These used to come out of the string table as "<mods>#<key>,<command line>", with
+// the command half parked in the context and handed to the text dispatcher when the
+// key fired. The bindings are here instead, beside the menu items they stand for.
 void RegMenuHotk(void)
 {
-	TCHAR tzHotk[MAX_NAME];
-	PTSTR ptzCmd;
-
 	if (bReg)
 	{
 		return;
 	}
 
-	RegisterHotKey(MainWindowHwnd, 0, MOD_ALT | MOD_CONTROL, 'M');
-
-	LoadString(g_hInst, IDS_Hotk, tzHotk, _NumOf(tzHotk));
-	ptzCmd = UStrChr(UStrTrim(tzHotk), ',');
-	if (ptzCmd)
-	{
-		UINT uMod = 0;
-		UINT uKey = 0;
-
-		*ptzCmd++ = 0;
-		UStrCopy(HotkCmd, ptzCmd);      // the command half, run when the key fires
-		GetKeyModAndKeyCode(tzHotk, uMod, uKey);
-		RegisterHotKey(MainWindowHwnd, 1, uMod, uKey);
-	}
+	RegisterHotKey(MainWindowHwnd, TRAY_HOTKEY_MENU, MOD_ALT | MOD_CONTROL, 'M');
+	RegisterHotKey(MainWindowHwnd, TRAY_HOTKEY_MODE, MOD_ALT | MOD_CONTROL, 'A');
 	bReg = TRUE;
 }
 //////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// Pull "<mods>,<key>,<command>" apart in place. FALSE when the text does not have
-// both commas, which is what a slot nobody wrote looks like.
-static BOOL SplitHotkeyBinding(PTSTR ptzText, UINT *puMod, UINT *puKey)
+// The hotkeys a script bound, in memory.
+//
+// These used to be text in the registry: the chain ran in a child process, so
+// the only thing that could reach the process owning the window was a string,
+// and that string was parsed again on the other side -- which is the injection
+// surface audit S-02 closed on the one hand and the round trip SPEC-11 says
+// disappears on the other. A binding is a closure now, and a closure cannot be
+// written down; the chain runs in this process, so it never has to be.
+//
+// `owner` is what keeps the interpreter -- and with it the scope the closure
+// captured -- alive for as long as the binding. Without it the interpreter would
+// be gone by the time a key is pressed.
+struct HotkeyBinding
 {
-	PTSTR ptzComma = UStrChr(ptzText, ',');
+	UINT                    uVk;
+	UINT                    uMods;
+	int                     line;		// where it was bound, for the trace
+	Lang::FuncPtr           fn;
+	std::shared_ptr<Lang::Interp> owner;
+};
 
-	if (!ptzComma)
-	{
-		return FALSE;
-	}
-	*ptzComma++ = 0;
-	*puMod = UStrToInt(ptzComma);
+std::vector<HotkeyBinding> s_hotkeys;
 
-	ptzComma = UStrChr(ptzComma, ',');
-	if (!ptzComma)
-	{
-		return FALSE;
-	}
-	*ptzComma++ = 0;
-	*puKey = UStrToInt(ptzComma);
-	return TRUE;
+// Defined in host.cpp, which the unity build puts after this file: running the
+// closure means calling into the interpreter, and CallFunc lives there.
+namespace Lang
+{
+	void RunHotkeyCallback(size_t slot);
 }
 
-// Register the hotkeys the tray knows about, reading them back out of PELOGON
-// first: this runs again when the main thread sees the shell key appear, and a
-// HOTK that was written after this file was first read has to be picked up.
-//
-// Eight slots, each holding "<mods>,<key>,<command>". The id is the slot plus two,
-// so slots 0 and 1 stay with the menu's own two hotkeys.
-//
-// The read size is the real size of the buffer it reads into: MAX_STR against a
-// MAX_PATH-wide array would be 1024 bytes for 520, and a long command line could
-// run off the end of it.
+// Register the hotkeys the script bound. The id is the slot plus two, so slots 0
+// and 1 stay with the menu's own two hotkeys.
 void RegHotKey(void)
 {
-	for (UINT i = 0; i < HOTKEY_SLOTS; i++)
+	for (size_t i = 0; i < s_hotkeys.size(); i++)
 	{
 		TCHAR tzValueName[MAX_NAME];
-		DWORD dwType = REG_SZ;
-		DWORD dwSize = sizeof(HotKeyCommand[i]);
-		UINT uMod = 0;
-		UINT uKey = 0;
-		BOOL bRegistered;
-
-		HotKeyCommand[i][0] = 0;
-		UStrPrint(tzValueName, TEXT("HotKey%d"), i + 1);
-		SHGetValue(HKEY_LOCAL_MACHINE, PELOGON, tzValueName, &dwType, &HotKeyCommand[i][0], &dwSize);
-
-		if (!HotKeyCommand[i][0])
-		{
-			continue;                   // nobody bound this slot
-		}
-		if (!SplitHotkeyBinding(HotKeyCommand[i], &uMod, &uKey) || (uKey <= 0))
-		{
-			continue;                   // not a binding - there is no key to register
-		}
-
-		bRegistered = RegisterHotKey(MainWindowHwnd, i + HOTKEY_ID_BASE, uMod, uKey);
+		BOOL bRegistered = RegisterHotKey(MainWindowHwnd, (int) (i + HOTKEY_ID_BASE),
+			s_hotkeys[i].uMods, s_hotkeys[i].uVk);
 
 		// What happened goes back into the registry under a second name, so a boot
 		// that cannot register a key says so somewhere a maintainer can read it.
+		// The bindings themselves are not there -- they are closures -- so this is
+		// what is left of the key as a place to look.
 		{
 			TCHAR tzResult[MAX_STR];
 
 			UStrPrint(tzValueName, TEXT("RegHotKey%d"), i + 1);
-			UStrPrint(tzResult, TEXT("Result=%d; KeyMod=%d, HotKey=%d; CMD=%s"),
-				bRegistered, uMod, uKey, HotKeyCommand[i]);
-			SHSetValue(HKEY_LOCAL_MACHINE, PELOGON, tzValueName, REG_SZ, tzResult,
-				UStrLen(tzResult) * sizeof(TCHAR));
+			UStrPrint(tzResult, TEXT("Result=%d; KeyMod=%d, HotKey=%d; closure"),
+				bRegistered, s_hotkeys[i].uMods, s_hotkeys[i].uVk);
+			SHSetValue(HKEY_LOCAL_MACHINE, PHOS_STATE, tzValueName, REG_SZ, tzResult,
+				(UStrLen(tzResult) + 1) * sizeof(TCHAR));
 		}
 	}
 
-	SHSetValue(HKEY_LOCAL_MACHINE, PELOGON, TEXT("MainWindowHwnd"), REG_DWORD,
+	SHSetValue(HKEY_LOCAL_MACHINE, PHOS_STATE, TEXT("MainWindowHwnd"), REG_DWORD,
 		&MainWindowHwnd, sizeof(MainWindowHwnd));
 }
 //////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// Entries the menu has room for, and the id the tray's own "hide" item carries.
-#define MENU_COMMAND_MAX	128
-
-// Store one item's command, and hand back the label the item should show.
-//
-// The text comes out of Resource.rc as "<label>,<command line>". The label stays on
-// the item; the command is expanded now rather than when the item is clicked,
-// because by then the environment it names may be different. It is parked in
-// MenuCommand for the window procedure to hand to RunBoundCommand.
-static PTSTR MenuItemLabel(PTSTR ptzText)
-{
-	PTSTR ptzCmd = UStrChr(ptzText, ',');
-
-	if (ptzCmd)
-	{
-		TCHAR tzCmd[MAX_PATH] = {0};
-
-		*ptzCmd++ = 0;
-		ExpandEnvironmentStrings(UStrTrim(ptzCmd), tzCmd, _NumOf(tzCmd));
-		// The table has a fixed size, and this is one of the two places that
-		// writes into it.
-		if (ToalMenu < MENU_COMMAND_MAX)
-		{
-			UStrCopyTo(MenuCommand[ToalMenu], tzCmd);
-			ToalMenu++;
-		}
-	}
-	return UStrTrim(ptzText);
-}
-
-// Walk a menu and split each item's text into a label and a command.
-//
-// Items are numbered from the first real id upwards, which is what maps a click
-// back to its command -- MenuFirstID is that base. GetMenuItemID answers -1 for a
-// submenu and 0 for a separator, so those two are not items. The item whose id is
-// ID_HIDE_ICON is the tray's own entry and carries no command.
-void SetMenuText(HMENU hsMenu)
-{
-	int nItems = GetMenuItemCount(hsMenu);
-
-	for (int i = 0; i < nItems; i++)
-	{
-		int nId = GetMenuItemID(hsMenu, i);
-		HMENU hSub;
-		MENUITEMINFO mii;
-		TCHAR tzText[MAX_STR];
-
-		if (nId == -1)                  // a submenu: walk into it
-		{
-			hSub = GetSubMenu(hsMenu, i);
-			if (hSub)
-			{
-				SetMenuText(hSub);
-			}
-			continue;
-		}
-		if (nId == 0)                   // a separator
-		{
-			continue;
-		}
-		if (!MenuFirstID)
-		{
-			MenuFirstID = nId;
-		}
-		if ((nId == ID_HIDE_ICON) || (ToalMenu >= MENU_COMMAND_MAX))
-		{
-			continue;                   // the tray's own entry, or the table is full
-		}
-
-		mii.cbSize = sizeof(mii);
-		mii.fMask = MIIM_TYPE;
-		mii.fType = MFT_STRING;
-		mii.cch = _NumOf(tzText);
-		mii.dwTypeData = tzText;
-		GetMenuItemInfo(hsMenu, nId, FALSE, &mii);
-
-		ModifyMenu(hsMenu, nId, MF_STRING, nId, MenuItemLabel(tzText));
-	}
-}
+// The menu's items are labels and nothing else now: Resource.rc carries the text
+// the user reads, and WM_COMMAND carries the id that says what to do. Splitting
+// "<label>,<command line>" on the comma and re-expanding the tail is gone with the
+// dialect it fed.
 //////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // Build the tray menu, or drop it.
 //
-// TRUE: load the resource once, register the hotkey that opens the menu, and walk
-// the items through SetMenuText. FALSE: tear the submenu down and then the menu,
-// and only clear a handle once its DestroyMenu has actually succeeded.
+// TRUE: load the resource once and register the hotkey that opens the menu.
+// FALSE: tear the submenu down and then the menu, and only clear a handle once its
+// DestroyMenu has actually succeeded.
 HMENU MyPopupMenu(BOOL Created)
 {
 	if (Created)
@@ -283,12 +141,7 @@ HMENU MyPopupMenu(BOOL Created)
 		if (!hSubMenu && hMenu)
 		{
 			RegMenuHotk();
-			ToalMenu = 0;
 			hSubMenu = GetSubMenu(hMenu, 0);
-			if (hSubMenu)
-			{
-				SetMenuText(hSubMenu);
-			}
 		}
 		return hSubMenu;
 	}
@@ -393,23 +246,100 @@ void PopupLogonMenu(HWND hWND)
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// WM_HOTKEY. 0 opens or closes the tray menu, 1 is the resource-bound one, and the
+// WM_HOTKEY. 0 opens or closes the tray menu, 1 is the quick display mode, and the
 // rest are the script's slots -- the id is the slot plus the base they were
 // registered under.
 static void OnHotKey(WPARAM wParam)
 {
 	switch (LOWORD(wParam))
 	{
-	case 0:
+	case TRAY_HOTKEY_MENU:
 		InsTrayIcon(!hSubMenu);
 		break;
-	case 1:
-		RunBoundCommand(HotkCmd);
+	case TRAY_HOTKEY_MODE:
+		ApplyDisplayMode(800, 600, 16, 75);
 		break;
 	default:
-		RunBoundCommand(HotKeyCommand[wParam - HOTKEY_ID_BASE]);
+		// A slot a script bound: a closure, run in the interpreter that made it.
+		Lang::RunHotkeyCallback((size_t) (LOWORD(wParam) - HOTKEY_ID_BASE));
 	}
 }
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// What a menu item does.
+//
+// The ids are the interface between this and app.rc: the label lives in the
+// resource, the action here, and the number is what joins them. The display items
+// are a table because there are twelve of them and they differ only in four
+// figures.
+static const struct
+{
+	UINT	uId;
+	DWORD	uWidth;
+	DWORD	uHeight;
+	DWORD	uBits;
+	DWORD	uHz;
+} c_MenuDisplayModes[] =
+{
+	{ ID_1024_768_32_85,   1024,  768, 32, 85 },
+	{ ID_1024_768_32_90,   1024,  768, 32, 90 },
+	{ ID_1024_768_16_85,   1024,  768, 16, 85 },
+	{ ID_1024_768_16_90,   1024,  768, 16, 90 },
+	{ ID_1280_1024_32_85,  1280, 1024, 32, 85 },
+	{ ID_1280_1024_32_90,  1280, 1024, 32, 90 },
+	{ ID_1280_1024_16_85,  1280, 1024, 16, 85 },
+	{ ID_1280_1024_16_90,  1280, 1024, 16, 90 },
+	{ ID_800_600_32_85,     800,  600, 32, 85 },
+	{ ID_800_600_32_75,     800,  600, 32, 75 },
+	{ ID_800_600_16_85,     800,  600, 16, 85 },
+	{ ID_800_600_16_75,     800,  600, 16, 75 },
+};
+
+// A menu item is a person at the machine, so the two that change something the
+// user cannot see -- eject, and the temporary folder -- ask first, and the ones
+// that only change a mode do not. Nothing here reports failure: the item has been
+// clicked and answered, and there is nowhere left to put an error code.
+static void OnMenuCommand(UINT uId)
+{
+	switch (uId)
+	{
+	case ID_TRAY_HELP:
+		ShowAbout();
+		return;
+
+	case ID_EJECT_USB:
+		// A person clicked this, so the retry question is one they can answer.
+		EjectDrives(NULL, 0, FALSE, TRUE, TRUE);
+		return;
+
+	case ID_EJECT_CDROM:
+		EjectDrives(NULL, 0, TRUE, FALSE, TRUE);
+		return;
+
+	case ID_DEL_TEMP:
+		TempClearFolder();
+		return;
+
+	case ID_SET_TEMP:
+		TempSetFolder();
+		return;
+
+	case ID_HIDE_ICON:
+		InsTrayIcon(FALSE);
+		return;
+	}
+
+	for (UINT i = 0; i < _NumOf(c_MenuDisplayModes); i++)
+	{
+		if (c_MenuDisplayModes[i].uId == uId)
+		{
+			ApplyDisplayMode(c_MenuDisplayModes[i].uWidth, c_MenuDisplayModes[i].uHeight,
+				c_MenuDisplayModes[i].uBits, c_MenuDisplayModes[i].uHz);
+			return;
+		}
+	}
+}
+//////////////////////////////////////////////////////////////////////////////////////////
 
 // FindShellMsg: the three steps the shell-detection thread asks for, in the order
 // it asks for them -- re-read the bindings, put the keyboard hook in, put the icon
@@ -426,6 +356,19 @@ static void OnFindShell(WPARAM wParam)
 		InstallHookKeyBoard(TRUE);
 		break;
 	case 2:
+		// The English tip, once, on the thread that owns the string. The Chinese
+		// one is appended in CreateMainWindow, before this thread exists.
+		if (NotChineseLangID && !MenuTipText[0])
+		{
+			TCHAR tzTip[MAX_NAME];
+
+			LoadString(g_hInst, IDS_TrayTip, tzTip, _NumOf(tzTip));
+			// Bounded: both halves fit on their own, the sum is not guaranteed
+			// to. A tooltip that is one character short is a tooltip; a buffer
+			// that runs over is a crash on the boot path.
+			UStrCatTo(MenuTipText, tzTip);
+			UStrTrim(MenuTipText);
+		}
 		InsTrayIcon(TRUE);
 		break;
 	}
@@ -444,14 +387,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		return 0;
 
 	case WM_COMMAND:
-		if (wParam == ID_HIDE_ICON)
-		{
-			InsTrayIcon(FALSE);
-		}
-		else
-		{
-			RunBoundCommand(MenuCommand[wParam - MenuFirstID]);
-		}
+		OnMenuCommand((UINT) LOWORD(wParam));
 		return 0;
 
 	case WM_HOTKEY:
@@ -505,12 +441,14 @@ HWND CreateMainWindow(HINSTANCE hInstance/*, int nCmdShow*/)
 	{
 		TCHAR tzChineseTip[MAX_NAME];
 
-		UINT16ToUStr(tzChineseTip, AppTrayText, _NumOf(AppTrayText));
+		UStrCopyTo(tzChineseTip, AppTrayText);
 		// UStrCat is wcscat: a NULL source is a crash, not a no-op, so the flag is
-		// tested here rather than folded into the pointer.
+		// tested here. Upstream expressed the condition by multiplying the pointer
+		// by the flag, which only works while a pointer fits in a DWORD.
 		if (!NotChineseLangID)
 		{
-			UStrCat(MenuTipText, tzChineseTip);
+			// Bounded for the same reason as the English tip above.
+			UStrCatTo(MenuTipText, tzChineseTip);
 		}
 	}
 
@@ -523,12 +461,12 @@ HWND CreateMainWindow(HINSTANCE hInstance/*, int nCmdShow*/)
 // Progress marker for the shell-locking thread. It has no log channel - it runs
 // in the boot driver, before any script opens one - and "did it run, what did it
 // see, did it decide the shell was already there" is the whole reason a shell
-// that dies after the fact never comes back. The value stays in the registry to
-// be read afterwards.
+// that dies after the fact never comes back. The harness reads this out of the
+// registry.
 static VOID ThreadMark(PCTSTR ptzText)
 {
-	SHSetValue(HKEY_LOCAL_MACHINE, PELOGON, TEXT("MainThread"), REG_SZ,
-		ptzText, UStrLen(ptzText) * sizeof(TCHAR));
+	SHSetValue(HKEY_LOCAL_MACHINE, PHOS_STATE, TEXT("MainThread"), REG_SZ,
+		ptzText, (UStrLen(ptzText) + 1) * sizeof(TCHAR));
 }
 
 // Watch for the shell this PE is supposed to end up with, and start it again if it
@@ -536,7 +474,6 @@ static VOID ThreadMark(PCTSTR ptzText)
 HRESULT MainThread(void)
 {
 	TCHAR tzMark[MAX_STR];
-	TCHAR tzRunShell[MAX_PATH];
 	TCHAR tzFound[MAX_NAME];
 	PTSTR ptzShellName;
 
@@ -549,7 +486,6 @@ HRESULT MainThread(void)
 
 	// What the thread found, for whoever reads the marker afterwards.
 	ptzShellName = UPathSplitName(MyShell);
-	UStrPrint(tzRunShell, TEXT("=$%s"), MyShell);
 	UStrPrint(tzFound, TEXT("%u"), (UINT) FindProc(ptzShellName));
 	UStrPrint(tzMark, TEXT("shell=%s findproc=%s window=%u check=%u"),
 		MyShell, tzFound, MainWindowHwnd ? 1 : 0, 1);
@@ -557,14 +493,10 @@ HRESULT MainThread(void)
 
 	if (MainWindowHwnd && !FindProc(ptzShellName))
 	{
-		TCHAR tzTip[MAX_NAME];
-
-		LoadString(g_hInst, IDS_TrayTip, tzTip, _NumOf(tzTip));
-		if (NotChineseLangID)
-		{
-			UStrCat(MenuTipText, tzTip);
-		}
-		UStrTrim(MenuTipText);
+		// The tip text is finished by the window thread, in OnFindShell below.
+		// This function runs on the shell thread, beside that one, and appending
+		// to the string the other is about to hand to Shell_NotifyIcon is two
+		// threads on one buffer.
 		SendMessage(MainWindowHwnd, FindShellMsg, 0, 0);
 	}
 
@@ -572,7 +504,7 @@ HRESULT MainThread(void)
 	// again.
 	while (MyShell[0] && !FindProc(ptzShellName))
 	{
-		Exec(g_ctx, tzRunShell);
+		StartShell(MyShell);
 		Sleep(200);
 	}
 	ThreadMark(TEXT("done: loop left, no more shell watching"));
@@ -586,14 +518,21 @@ HRESULT MainThread(void)
 // detection thread happens to look.
 //
 // RegHotKey() is called from exactly one place: the FindShellMsg 0 handler, which
-// MainThread sends once, the first time it sees PELOGON\Shell appear. The boot
+// MainThread sends once, the first time it sees Phosphor\Shell appear. The boot
 // chain starts the shell well before Post\Link.phos binds anything, so that read
 // found an empty registry and every key stayed dead - F1/F6/F7/F8 did nothing.
 //
-// The chain runs in a child process (Main spawns "<exe> LOAD <script>"), so this
-// process usually has no window of its own. Re-register here when it does, and
-// otherwise ask whichever process owns the tray window to re-read the registry.
-// WM_USER carries no pointers, so sending it across processes is safe.
+// A binding made by a script that is not running in the window's process -- a
+// Post script is a child of the chain -- asks whichever process owns the tray
+// window to re-read the registry. WM_USER carries no pointers, so it is safe to
+// pass between processes.
+//
+// It is *posted*, not sent. A send would wait for the window's thread to process
+// it, and while the chain is running that thread is the one blocked here, in the
+// spawn that is waiting for this very script: the send would wait for a thread
+// that is waiting for it, and the boot would stop for the length of the timeout.
+// Posting hands it over and lets the writer carry on; the reader picks it up the
+// next time it pumps.
 static VOID NotifyHotkeysChanged(void)
 {
 	HWND hTray;
@@ -606,86 +545,53 @@ static VOID NotifyHotkeysChanged(void)
 	hTray = FindWindow(szWindowClass, NULL);
 	if (hTray)
 	{
-		SendMessage(hTray, FindShellMsg, 0, 0);
+		PostMessage(hTray, FindShellMsg, 0, 0);
 	}
+}
+
+// Called by hotkey.bind. Answers false when every slot is taken: a binding that
+// silently vanished would be a key that does nothing and a script that has no
+// way to find out.
+bool AddHotkeyBinding(UINT uVk, UINT uMods, int line, const Lang::FuncPtr& fn,
+	const std::shared_ptr<Lang::Interp>& owner)
+{
+	HotkeyBinding b;
+
+	if (s_hotkeys.size() >= HOTKEY_SLOTS)
+	{
+		return false;
+	}
+	b.uVk = uVk;
+	b.uMods = uMods;
+	b.line = line;
+	b.fn = fn;
+	b.owner = owner;
+	s_hotkeys.push_back(b);
+	NotifyHotkeysChanged();
+	return true;
 }
 //////////////////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // HOTK <mods>#<key>,<command> -- record one binding.
 //
-// The binding goes into PELOGON as "HotKey<n>=<command>,<mods>,<key>", which is
+// The binding goes into the Phosphor key as "HotKey<n>=<command>,<mods>,<key>", which is
 // exactly the shape RegHotKey reads back, and eight is the ceiling for the same
 // reason there are eight slots. NotifyHotkeysChanged is what makes it take effect
 // now rather than whenever the shell-detection thread happens to look.
 //
 // The answer is 0 on every path, including the ones that bind nothing: a slot that
 // is full and a line with no comma answer the same as a binding that went in. That
-// is the compatible shape, and the startup chain binds hotkeys on every boot, so
+// is the reference's shape, and the startup chain binds hotkeys on every boot, so
 // the trace has to keep saying 0.
-HRESULT Hotk(CoreContext& ctx, PTSTR ptzHotk)
-{
-	PTSTR ptzCommand;
-	UINT uMod = 0;
-	UINT uKey = 0;
-	TCHAR tzValueName[16];
-	TCHAR tzBinding[MAX_PATH];
-
-	if (HotkCount >= HOTKEY_SLOTS)
-	{
-		return S_OK;
-	}
-	ptzCommand = UStrChr(ptzHotk, ',');
-	if (!ptzCommand)
-	{
-		return S_OK;
-	}
-
-	*ptzCommand++ = 0;
-	GetKeyModAndKeyCode(ptzHotk, uMod, uKey);
-
-	HotkCount++;
-	UStrPrint(tzValueName, TEXT("HotKey%d"), HotkCount);
-
-	// A binding that does not fit is refused: a shortened one would register a
-	// different command for that key.
-	if ((UStrLen(ptzCommand) + 24) >= _NumOf(tzBinding))
-	{
-		HotkCount--;
-		return E_INVALIDARG;
-	}
-	UStrPrint(tzBinding, TEXT("%s,%d,%d"), ptzCommand, uMod, uKey);
-	SHSetValue(HKEY_LOCAL_MACHINE, PELOGON, tzValueName, REG_SZ, tzBinding,
-		UStrLen(tzBinding) * sizeof(TCHAR));
-	NotifyHotkeysChanged();
-	return S_OK;
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// MD5 of the text, to the clipboard.
+// MD5 of the text, to the clipboard. This one is bucket 1 in the capability audit,
+// which the user put on hold, so the body is left as it is for now.
 //////////////////////////////////////////////////////////////////////////////////////////////////
-HRESULT Md5c(CoreContext& ctx, PTSTR ptzCmd)
-{	
-	PTSTR pMD5Code = UStrToMD5(ptzCmd);
-	// MAX_NAME, not the digest length: the caption is a resource string, and
-	// LoadString was being told it had room for eighty characters.
-	TCHAR ptzCaption[MAX_NAME];
-	HRESULT hrClip = SetClipboardText(pMD5Code);
-	if (SUCCEEDED(hrClip))
-	{
-		LoadString(g_hInst, IDS_SaveToClipboard, ptzCaption, _NumOf(ptzCaption));
-	}
-	else
-	{
-		LoadString(g_hInst, IDS_MD5String, ptzCaption, _NumOf(ptzCaption));
-	}
-	MessageBox(NULL,pMD5Code,ptzCaption, MB_OK);
-	return hrClip;
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-HRESULT Logo(CoreContext& ctx, PTSTR);

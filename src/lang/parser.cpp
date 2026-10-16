@@ -1,10 +1,11 @@
 ﻿//////////////////////////////////////////////////////////////////////////////////////////////////
 // Phosphor parser: tokens in, statement tree out.
 //
-// Newlines separate statements, `;` is accepted and ignored, and an expression
-// is allowed to run across a line break only after an operator, a comma or an
-// opening bracket - which is what lets the tables in the startup scripts stay
-// readable without making "a\nb" mean one call.
+// The grammar is the one in docs/LANGUAGE.md section 3. Newlines separate
+// statements, `;` is accepted and ignored, and an expression is allowed to run
+// across a line break only after an operator, a comma or an opening bracket -
+// which is what lets the tables in the startup scripts stay readable without
+// making "a\nb" mean one call.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 namespace Lang
 {
@@ -251,6 +252,16 @@ namespace Lang
 							return false;
 						}
 					}
+				}
+				else if (AtIdent(L"break"))
+				{
+					Next();
+					s->kind = ST_BREAK;
+				}
+				else if (AtIdent(L"continue"))
+				{
+					Next();
+					s->kind = ST_CONTINUE;
 				}
 				else if (AtIdent(L"try"))
 				{

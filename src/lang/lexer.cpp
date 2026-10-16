@@ -1,11 +1,11 @@
 ﻿//////////////////////////////////////////////////////////////////////////////////////////////////
 // Phosphor lexer.
 //
-// String literals do not process escapes: "X:\Windows\System32" is what it looks
-// like. A string that needs a newline or a real quote writes esc"...". Both forms
-// still take ${expr} interpolation, and the interpolation text is kept verbatim
-// here and taken apart by the parser, because the expression inside it is a full
-// one.
+// String literals do not process escapes, which is decision 16 in
+// docs/LANGUAGE.md: "X:\Windows\System32" is what it looks like. The rare case
+// that needs a newline or a real quote writes esc"...". Both forms still take
+// ${expr} interpolation, and the interpolation text is kept verbatim here and
+// taken apart by the parser, because the expression inside it is a full one.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 namespace Lang
 {
@@ -206,7 +206,9 @@ namespace Lang
 				body = ScanString(src, i, true, terminated);
 				if (!terminated)
 				{
-					err = L"unterminated string literal";
+					TCHAR tzBuf[128];
+					UStrPrint(tzBuf, TEXT("line %d: unterminated string literal"), line);
+					err = tzBuf;
 					return toks;
 				}
 				t.kind = TK_ESCSTR;
@@ -223,7 +225,9 @@ namespace Lang
 
 				if (!terminated)
 				{
-					err = L"unterminated string literal";
+					TCHAR tzBuf[128];
+					UStrPrint(tzBuf, TEXT("line %d: unterminated string literal"), line);
+					err = tzBuf;
 					return toks;
 				}
 				t.kind = TK_STR;
@@ -278,7 +282,10 @@ namespace Lang
 				// the value would otherwise be wrong with nothing to show it.
 				if (bOverflow)
 				{
-					err = L"integer literal is out of range: " + digits;
+					TCHAR tzBuf[256];
+					UStrPrint(tzBuf, TEXT("line %d: integer literal is out of range: %s"),
+						line, digits.c_str());
+					err = tzBuf;
 					return toks;
 				}
 				t.i = (long long) value;

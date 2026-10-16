@@ -1,15 +1,6 @@
-﻿// Put one of the encoded string tables below back into text. Each character is
-// stored as a WORD with an index-dependent offset, so this is the whole decoder;
-// it is not encryption, it only keeps the strings out of a naive binary scan.
-PTSTR UINT16ToUStr(PTSTR ptzBuf, const WORD ByteArray[], WORD pzBufLen)
-{
-	for (WORD i = 0; i < pzBufLen; i++)
-	{
-		ptzBuf[i] = ByteArray[i] + i + 1;
-	}
-	ptzBuf[pzBufLen] = 0;
-	return ptzBuf;
-}
+﻿// Helpers the area split left in this file: the clipboard writer, the hotplug
+// drive-type question, the trace formatter and a couple of registry readers. The
+// name comes from where the file was carved out, not from what ended up in it.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -21,64 +12,9 @@ PTSTR UINT16ToUStr(PTSTR ptzBuf, const WORD ByteArray[], WORD pzBufLen)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Put the text on the clipboard as ANSI text, which is the format its readers
-// ask for. Two details matter: the handle given to SetClipboardData belongs to
-// the clipboard afterwards and must not be freed here, and a clipboard that
-// would not empty is a failure rather than a success.
-HRESULT SetClipboardText(PTSTR ptzText)
-{
-	// Sized from the string, not from a constant: the ANSI byte count of a
-	// Chinese string is not its character count, and the fixed buffer turned an
-	// over-long string into an empty clipboard entry.
-	std::vector<CHAR> text;
-	HGLOBAL hGlobal;
-	UINT uSize;
-	BOOL bResult = FALSE;
-
-	{
-		int cb = WideCharToMultiByte(CP_ACP, 0, ptzText, -1, NULL, 0, NULL, NULL);
-
-		if (cb <= 0)
-		{
-			return S_FALSE;
-		}
-		text.resize((size_t) cb);
-		WideCharToMultiByte(CP_ACP, 0, ptzText, -1, &text[0], cb, NULL, NULL);
-	}
-	uSize = UAStrLen(&text[0]);
-
-	if (!OpenClipboard(NULL))
-	{
-		return FALSE;
-	}
-	if (EmptyClipboard())
-	{
-		hGlobal = GlobalAlloc(GMEM_ZEROINIT, uSize + 1);
-		if (hGlobal)
-		{
-			LPSTR pszLocked = (LPSTR) GlobalLock(hGlobal);
-
-			if (pszLocked)
-			{
-				UMemCopy(pszLocked, &text[0], uSize + 1);
-				GlobalUnlock(hGlobal);
-				if (SetClipboardData(CF_TEXT, hGlobal) != NULL)
-				{
-					bResult = TRUE;         // the clipboard owns the handle now
-				}
-				else
-				{
-					GlobalFree(hGlobal);
-				}
-			}
-			else
-			{
-				GlobalFree(hGlobal);
-			}
-		}
-	}
-	CloseClipboard();
-	return bResult ? S_OK : S_FALSE;
-}
+// ask for. Two things the reference got wrong and this does not: the handle given
+// to SetClipboardData belongs to the clipboard afterwards and must not be freed
+// here, and a clipboard that would not empty is a failure rather than a success.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -154,21 +90,6 @@ UINT MyGetDriveType(PTSTR ptzDriver)
 // Log result
 // One line of the trace channel: formatted from a resource string, and only when
 // a channel is open. The text is appended to the buffer the channel writes out.
-VOID XLog(UINT uFmtRes, ...)
-{
-	va_list va;
-	TCHAR tzLog[MAX_STR];
-	TCHAR tzStr[MAX_PATH];
-
-	if (!g_hXLog)
-	{
-		return;
-	}
-	va_start(va, uFmtRes);
-	UStrPrintV(tzLog, _GetStr(uFmtRes), va);
-	va_end(va);
-	UStrCat(LogFileData, tzLog);
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 

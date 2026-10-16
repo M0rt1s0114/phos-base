@@ -1,8 +1,10 @@
 ﻿// The base every file in this tree starts from: the types, the limits and the
 // thin Win32 wrappers the rest of the code is written against.
 //
-// Only what this tree uses is here, and each body is written against the Win32
-// call it stands for. The names are the ones the call sites already use.
+// It replaces src/legacy/UniBase.h -- 1,095 lines of the reference's own utility
+// layer, most of which nothing here ever called. What is below is only what this
+// tree uses, and each body is written against the Win32 call it stands for. The
+// names stay because they are the ones the call sites already use.
 #pragma once
 
 #include <TChar.h>
@@ -277,76 +279,58 @@ inline UINT UFileWrite(HANDLE hFile, PCVOID pvData, UINT uSize)
 	return dwWritten;
 }
 
+// Does that name exist?
+//
+// It used to be answered by opening the file for reading, which makes three
+// ordinary questions come back "no": a directory (no FILE_FLAG_BACKUP_SEMANTICS),
+// a file somebody else has opened exclusively (pagefile.sys, a hive in use), and
+// anything the caller may not read. GetFileAttributes asks the question that was
+// actually meant. The structured fs.exists has always done it this way, so the
+// two front ends disagreed about the same path.
 inline BOOL UFileExist(PCTSTR ptzPath)
 {
-	HANDLE hFile = UFileOpen(ptzPath, UFILE_READ);
-
-	if (hFile)
-	{
-		UFileClose(hFile);
-		return TRUE;
-	}
-	return FALSE;
+	return (GetFileAttributes(ptzPath) != INVALID_FILE_ATTRIBUTES);
 }
 
-inline UINT UFileSave(PCTSTR ptzPath, PCVOID pvData, UINT uSize, DWORD dwAccess)
-{
-	HANDLE hFile = UFileOpen(ptzPath, dwAccess);
-	UINT uWritten = 0;
-
-	if (hFile)
-	{
-		uWritten = UFileWrite(hFile, pvData, uSize);
-		UFileClose(hFile);
-	}
-	return uWritten;
-}
-
-// Read a whole file. A NULL buffer means "make me one", and the caller frees
-// that with UMemFree; *puSize comes back as the number of bytes read either
-// way. The two bytes written past the file's end are what keeps the result
-// usable as text, and the allocation leaves room for them.
-inline PVOID UFileLoad(PCTSTR ptzPath, PVOID pvData, PUINT puSize)
+// Read a whole file into a buffer of our own. The caller frees it with
+// UMemFree; *puSize comes back as the number of bytes read. The two bytes
+// written past the file's end are what keeps the result usable as text, and
+// the allocation leaves room for them.
+//
+// There used to be a second form that filled a caller's buffer. Nothing called
+// it, and it could not have worked if something had: the length it asked for
+// was capped by a file size that was only ever measured on the other branch,
+// so it read zero bytes. It is gone rather than repaired -- one way to read a
+// file, and it is the one that works.
+inline PVOID UFileLoad(PCTSTR ptzPath, PUINT puSize)
 {
 	HANDLE hFile = UFileOpen(ptzPath, UFILE_READ);
+	PVOID pvData = NULL;
 
 	if (hFile)
 	{
 		LARGE_INTEGER liSize;
 		UINT uFileSize = 0;
-		UINT uWant;
 
-		if (!pvData)
+		// GetFileSizeEx, not GetFileSize with a NULL high word: the size
+		// decides the allocation below, so the high half of it cannot be
+		// dropped.
+		if (GetFileSizeEx(hFile, &liSize) && (liSize.QuadPart > 0))
 		{
-			// GetFileSizeEx, not GetFileSize with a NULL high word: the size
-			// decides the allocation below, so the high half of it cannot be
-			// dropped.
-			if (GetFileSizeEx(hFile, &liSize) && (liSize.QuadPart > 0))
-			{
-				uFileSize = (liSize.QuadPart > (LONGLONG) UINT_MAX) ? UINT_MAX : (UINT) liSize.QuadPart;
-			}
-			pvData = UMemAlloc(uFileSize + 16);
-			uWant = uFileSize;
+			uFileSize = (liSize.QuadPart > (LONGLONG) UINT_MAX) ? UINT_MAX : (UINT) liSize.QuadPart;
 		}
-		else
-		{
-			// A caller's buffer is filled to two bytes short of its size, so
-			// the two terminators written below stay inside it.
-			UINT uHave = ((puSize != NULL) && (*puSize >= 2)) ? (*puSize - 2) : 0;
-
-			uWant = (uHave < uFileSize) ? uHave : uFileSize;
-		}
+		pvData = UMemAlloc(uFileSize + 16);
 		if (pvData)
 		{
 			DWORD dwRead = 0;
 
-			if (!ReadFile(hFile, pvData, uWant, &dwRead, NULL))
+			if (!ReadFile(hFile, pvData, uFileSize, &dwRead, NULL))
 			{
 				dwRead = 0;		// the terminators below still make it an empty string
 			}
 			// Terminate where the read ended rather than at the file's size:
-			// with a caller's buffer the two are not the same, and using the
-			// file's size wrote past the end of it.
+			// a short read is a read that ended early, and the bytes past it
+			// are not ours to claim.
 			((PBYTE) pvData)[dwRead] = 0;
 			((PBYTE) pvData)[dwRead + 1] = 0;
 			if (puSize)

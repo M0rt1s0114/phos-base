@@ -1,9 +1,11 @@
 ﻿//////////////////////////////////////////////////////////////////////////////////////////////////
 // Phosphor interpreter.
 //
-// A tree walking evaluator over the parser's output. Values copy on assignment,
-// only false and nil are falsy, and a failing host call raises unless the script
-// wraps it in try.
+// A tree walking evaluator over the parser's output. Values have value
+// semantics implemented with copy-on-write: binding, arguments and capture
+// share a container, and it is cloned only when something writes through it
+// (SPEC-7). Only false and nil are falsy (section 2), and a failing host call
+// raises unless the script wraps it in try (decision 9).
 //
 // There is a step ceiling. It is not a language feature, it is a WinPE
 // seatbelt: "while true { }" in a boot script must not leave the machine
@@ -15,30 +17,42 @@ namespace Lang
 	// The most negative 64-bit value. Spelled here rather than taken from
 	// <limits.h>, which this tree does not include.
 	const long long c_i64Min = (-9223372036854775807LL - 1LL);
+	const long long c_i64Max = 9223372036854775807LL;
 
-	Value CopyValue(const Value& v)
+	// How deep equality will follow a value before it stops.
+	//
+	// Data is not meant to nest this far, and a script that builds such a value
+	// is a runaway, not a data structure. The ceiling turns that into a script
+	// error naming the line instead of a stack the process never comes back
+	// from, the way the call ceiling does for recursion. It is roomy: a real
+	// boot config nests a handful of levels.
+	const int c_valueDepthLimit = 1000;
+
+	// A list or record is shared, not copied, when a value is bound to another
+	// name, passed to a function or captured by a closure (SPEC-7). This is the
+	// write side of that bargain: a container that more than one value refers
+	// to is cloned before it is written through, so the other holders keep the
+	// value they had.
+	//
+	// Only the container is cloned and its elements are shared until they too
+	// are written through. That is what keeps the common shape -- hand a big
+	// list to a reader -- free, which is the whole point of copy-on-write.
+	void CloneIfShared(Value& v)
 	{
-		Value out(v);
-
-		if ((v.kind == VK_LIST) && v.list)
+		if ((v.kind == VK_LIST) && v.list && (v.list.use_count() > 1))
 		{
-			out.list = ListPtr(new std::vector<Value>());
-			out.list->reserve(v.list->size());
-			for (size_t i = 0; i < v.list->size(); i++)
-			{
-				out.list->push_back(CopyValue((*v.list)[i]));
-			}
+#ifdef PHOS_TESTHOOKS
+			InterlockedIncrement(&g_deepCopies);
+#endif
+			v.list = ListPtr(new std::vector<Value>(*v.list));
 		}
-		else if ((v.kind == VK_RECORD) && v.rec)
+		else if ((v.kind == VK_RECORD) && v.rec && (v.rec.use_count() > 1))
 		{
-			out.rec = RecordPtr(new std::vector<std::pair<String, Value> >());
-			out.rec->reserve(v.rec->size());
-			for (size_t i = 0; i < v.rec->size(); i++)
-			{
-				out.rec->push_back(std::make_pair((*v.rec)[i].first, CopyValue((*v.rec)[i].second)));
-			}
+#ifdef PHOS_TESTHOOKS
+			InterlockedIncrement(&g_deepCopies);
+#endif
+			v.rec = RecordPtr(new std::vector<std::pair<String, Value> >(*v.rec));
 		}
-		return out;
 	}
 
 	String ToText(const Value& v)
@@ -70,6 +84,32 @@ namespace Lang
 		return ToText(v);
 	}
 
+	// What "${...}" does with a value.
+	//
+	// nil, a list, a record and a function are refused here. Spelling them --
+	// "nil", "(list)" -- produces a string that looks like an answer:
+	// "${root}\\x" with root unset handed "nil\x" to fs.*, and the file
+	// operation then failed somewhere else entirely. The rule for this language
+	// is that a mistake stops the run, so this says what is wrong where it
+	// happens.
+	String ToInterpolated(const Value& v, int line)
+	{
+		switch (v.kind)
+		{
+		case VK_NIL:
+			throw Error(0x80070057, L"cannot put nil into a string (is the name spelled right?)", line);
+		case VK_LIST:
+			throw Error(0x80070057, L"cannot put a list into a string", line);
+		case VK_RECORD:
+			throw Error(0x80070057, L"cannot put a record into a string", line);
+		case VK_FUNC:
+			throw Error(0x80070057, L"cannot put a function into a string", line);
+		default:
+			break;
+		}
+		return ToDisplay(v);
+	}
+
 	bool Truthy(const Value& v)
 	{
 		if (v.kind == VK_NIL)
@@ -83,23 +123,94 @@ namespace Lang
 		return true;
 	}
 
-	bool ValueEquals(const Value& a, const Value& b)
+	// Structural equality, with a ceiling on how deep it follows a value.
+	//
+	// Two values are the same when they are the same kind and the same content:
+	// two separately built lists are equal when their elements are, and a record
+	// does not care what order its fields were written in. Functions compare by
+	// identity -- two closures are the same only when they are the same object.
+	//
+	// The pointer check at the top of each container case is a fast path for
+	// "the same value", not the rule: a shared value equals itself by content
+	// anyway, and a value only ever shares with an equal one.
+	bool ValueEqualsDepth(const Value& a, const Value& b, int depth, int line)
 	{
+		if (depth > c_valueDepthLimit)
+		{
+			throw Error(0x80070057, L"value nested past the depth limit (runaway data structure?)", line);
+		}
 		if (a.kind != b.kind)
 		{
 			return false;
 		}
 		switch (a.kind)
 		{
-		case VK_NIL:    return true;
-		case VK_BOOL:   return a.b == b.b;
-		case VK_INT:    return a.i == b.i;
-		case VK_STR:    return a.s == b.s;
-		case VK_LIST:   return a.list == b.list;
-		case VK_RECORD: return a.rec == b.rec;
-		case VK_FUNC:   return a.fn == b.fn;
+		case VK_NIL:  return true;
+		case VK_BOOL: return a.b == b.b;
+		case VK_INT:  return a.i == b.i;
+		case VK_STR:  return a.s == b.s;
+		case VK_LIST:
+			{
+				if (a.list == b.list)
+				{
+					return true;
+				}
+				if (!a.list || !b.list || (a.list->size() != b.list->size()))
+				{
+					return false;
+				}
+				for (size_t i = 0; i < a.list->size(); i++)
+				{
+					if (!ValueEqualsDepth((*a.list)[i], (*b.list)[i], depth + 1, line))
+					{
+						return false;
+					}
+				}
+				return true;
+			}
+		case VK_RECORD:
+			{
+				if (a.rec == b.rec)
+				{
+					return true;
+				}
+				if (!a.rec || !b.rec || (a.rec->size() != b.rec->size()))
+				{
+					return false;
+				}
+				// Field order is not part of a record's value, so each field of
+				// one is looked up by name in the other.
+				for (size_t i = 0; i < a.rec->size(); i++)
+				{
+					const String& key = (*a.rec)[i].first;
+					bool found = false;
+					for (size_t k = 0; k < b.rec->size(); k++)
+					{
+						if ((*b.rec)[k].first == key)
+						{
+							if (!ValueEqualsDepth((*a.rec)[i].second, (*b.rec)[k].second, depth + 1, line))
+							{
+								return false;
+							}
+							found = true;
+							break;
+						}
+					}
+					if (!found)
+					{
+						return false;
+					}
+				}
+				return true;
+			}
+		case VK_FUNC: return a.fn == b.fn;
 		}
 		return false;
+	}
+
+	bool ValueEquals(const Value& a, const Value& b, int line)
+	{
+		return ValueEqualsDepth(a, b, 0, line);
 	}
 
 	namespace
@@ -119,11 +230,39 @@ namespace Lang
 			return NULL;
 		}
 
+		// The scope a closure carries: the values its body uses, copied out at
+		// the moment it is created (SPEC-4, capture by value).
+		//
+		// Its parent is the module scope, not the scope the closure was written
+		// in. That is what keeps a closure created inside a loop from holding the
+		// loop frame alive: an Env -> Value -> Env cycle is invisible to
+		// reference counting, so the frame would never be freed. A name that is
+		// not captured still reaches the module scope by name, which is how a
+		// closure calls a top level function.
+		EnvPtr MakeClosureEnv(Interp& in, const EnvPtr& env, const std::vector<String>& names)
+		{
+			EnvPtr capture(new Env(in.env));
+			for (size_t i = 0; i < names.size(); i++)
+			{
+				Value *found = LookupVar(env, names[i]);
+				if (found)
+				{
+					capture->vars[names[i]] = *found;
+				}
+			}
+			return capture;
+		}
+
 		void Tick(Interp& in, int line)
 		{
+			// The breadcrumb the crash handler reads. One store per statement,
+			// which is what makes "line 37" mean anything in the record.
+			CrashSetLine(line);
 			if (++in.steps > in.stepLimit)
 			{
-				throw Error(0x8000FFFF, L"step limit reached (runaway loop?)", line);
+				// Not an Error on purpose: SPEC-6 keeps the watchdog out of the
+				// language's `catch`, which only takes Error.
+				throw GuardSignal(0x8000FFFF, L"step limit reached (runaway loop?)", line);
 			}
 		}
 
@@ -169,15 +308,16 @@ namespace Lang
 			struct DepthGuard
 			{
 				Interp& in;
-				explicit DepthGuard(Interp& target) : in(target) { in.depth++; }
-				~DepthGuard() { in.depth--; }
+				explicit DepthGuard(Interp& target) : in(target) { in.depth++; CrashSetDepth(in.depth); }
+				~DepthGuard() { in.depth--; CrashSetDepth(in.depth); }
 			} guard(in);
 
-			// Arguments are copied into the callee, so a list passed in cannot be
-			// written through from the other side.
+			// Arguments are bound into the callee. A container is shared, and a
+			// write on either side clones it first, so a list passed in cannot
+			// be written through from the other side (SPEC-7).
 			for (size_t i = 0; i < fn->params.size(); i++)
 			{
-				call->vars[fn->params[i]] = CopyValue(args[i]);
+				call->vars[fn->params[i]] = args[i];
 			}
 
 			try
@@ -222,8 +362,8 @@ namespace Lang
 
 				switch (e->op)
 				{
-				case TK_EQ: r.kind = VK_BOOL; r.b = ValueEquals(a, b); return r;
-				case TK_NE: r.kind = VK_BOOL; r.b = !ValueEquals(a, b); return r;
+				case TK_EQ: r.kind = VK_BOOL; r.b = ValueEquals(a, b, e->line); return r;
+				case TK_NE: r.kind = VK_BOOL; r.b = !ValueEquals(a, b, e->line); return r;
 				case TK_LT: case TK_LE: case TK_GT: case TK_GE:
 					if ((a.kind != VK_INT) || (b.kind != VK_INT))
 					{
@@ -239,7 +379,8 @@ namespace Lang
 					break;
 				}
 
-				// Arithmetic. Same types only: 1 + "1" is an error, not "11".
+				// Arithmetic. Same types only, which is decision 3 in the language
+				// document: 1 + "1" is an error, not "11".
 				if (e->op == TK_PLUS && (a.kind == VK_STR) && (b.kind == VK_STR))
 				{
 					r.kind = VK_STR;
@@ -271,30 +412,80 @@ namespace Lang
 				r.kind = VK_INT;
 				switch (e->op)
 				{
-				// The arithmetic wraps, which is what the language says it
-				// does. Signed overflow is undefined in C++, so the work is
-				// done in the unsigned type and cast back: that is exactly
-				// two's-complement wraparound, defined, instead of a value the
-				// optimiser is allowed to invent.
-				case TK_PLUS:  r.i = (long long) ((unsigned long long) a.i + (unsigned long long) b.i); break;
-				case TK_MINUS: r.i = (long long) ((unsigned long long) a.i - (unsigned long long) b.i); break;
-				case TK_STAR:  r.i = (long long) ((unsigned long long) a.i * (unsigned long long) b.i); break;
+				// These used to wrap, deliberately, and the language reference
+				// said so. SPEC-8 changed the rule: a sum that cannot be
+				// represented stops the script. Silently wrapping is the kind
+				// of wrong answer this language is built to refuse, and it is
+				// also the kind that survives to the end of a boot before
+				// anybody notices.
+				case TK_PLUS:
+					if (((b.i > 0) && (a.i > c_i64Max - b.i)) ||
+						((b.i < 0) && (a.i < c_i64Min - b.i)))
+					{
+						throw Error(0x80070057, L"integer overflow in '+'", e->line);
+					}
+					r.i = a.i + b.i;
+					break;
+				case TK_MINUS:
+					if (((b.i < 0) && (a.i > c_i64Max + b.i)) ||
+						((b.i > 0) && (a.i < c_i64Min + b.i)))
+					{
+						throw Error(0x80070057, L"integer overflow in '-'", e->line);
+					}
+					r.i = a.i - b.i;
+					break;
+				case TK_STAR:
+					{
+						// Magnitudes in the unsigned type, then one division to
+						// see whether the product fits. Signed multiplication
+						// that overflows is undefined in C++; this never
+						// overflows and the answer is exact.
+						unsigned long long ua = (a.i < 0)
+							? (0ULL - (unsigned long long) a.i) : (unsigned long long) a.i;
+						unsigned long long ub = (b.i < 0)
+							? (0ULL - (unsigned long long) b.i) : (unsigned long long) b.i;
+						unsigned long long up = ua * ub;
+
+						if ((ub != 0) && ((up / ub) != ua))
+						{
+							throw Error(0x80070057, L"integer overflow in '*'", e->line);
+						}
+						// Room for the negative side is one larger than for the
+						// positive one, and only there.
+						if (up > ((a.i < 0) != (b.i < 0)
+							? ((unsigned long long) c_i64Max + 1ULL)
+							: (unsigned long long) c_i64Max))
+						{
+							throw Error(0x80070057, L"integer overflow in '*'", e->line);
+						}
+						r.i = (long long) (((a.i < 0) != (b.i < 0)) ? (0ULL - up) : up);
+					}
+					break;
 				case TK_SLASH:
 					if (b.i == 0)
 					{
 						throw Error(0x80070057, L"division by zero", e->line);
 					}
 					// The one division that traps in hardware rather than
-					// answering: the result is not representable. Wrapping, as
-					// the operators above do, gives the most negative value.
-					r.i = ((a.i == c_i64Min) && (b.i == -1)) ? c_i64Min : (a.i / b.i);
+					// answering: the result is not representable. It used to
+					// answer with the most negative value, which is a made up
+					// number; say so instead.
+					if ((a.i == c_i64Min) && (b.i == -1))
+					{
+						throw Error(0x80070057, L"integer overflow in '/'", e->line);
+					}
+					r.i = a.i / b.i;
 					break;
 				case TK_PERCENT:
 					if (b.i == 0)
 					{
 						throw Error(0x80070057, L"division by zero", e->line);
 					}
-					r.i = ((a.i == c_i64Min) && (b.i == -1)) ? 0 : (a.i % b.i);
+					if ((a.i == c_i64Min) && (b.i == -1))
+					{
+						throw Error(0x80070057, L"integer overflow in '%'", e->line);
+					}
+					r.i = a.i % b.i;
 					break;
 				default:
 					throw Error(0x80070057, L"unsupported operator", e->line);
@@ -323,7 +514,7 @@ namespace Lang
 					String out;
 					for (size_t i = 0; i < e->items.size(); i++)
 					{
-						out += ToDisplay(EvalExpr(in, e->items[i], env));
+						out += ToInterpolated(EvalExpr(in, e->items[i], env), e->line);
 					}
 					r.kind = VK_STR;
 					r.s = out;
@@ -335,7 +526,7 @@ namespace Lang
 					r.list = ListPtr(new std::vector<Value>());
 					for (size_t i = 0; i < e->items.size(); i++)
 					{
-						r.list->push_back(CopyValue(EvalExpr(in, e->items[i], env)));
+						r.list->push_back(EvalExpr(in, e->items[i], env));
 					}
 					return r;
 				}
@@ -345,7 +536,7 @@ namespace Lang
 					r.rec = RecordPtr(new std::vector<std::pair<String, Value> >());
 					for (size_t i = 0; i < e->keys.size(); i++)
 					{
-						r.rec->push_back(std::make_pair(e->keys[i], CopyValue(EvalExpr(in, e->items[i], env))));
+						r.rec->push_back(std::make_pair(e->keys[i], EvalExpr(in, e->items[i], env)));
 					}
 					return r;
 				}
@@ -441,10 +632,18 @@ namespace Lang
 					{
 						r.kind = VK_BOOL; r.b = !Truthy(a); return r;
 					}
-					// Same wraparound rule as the arithmetic operators, so
-					// negating the most negative value is defined too.
 					r.kind = VK_INT;
-					r.i = (long long) (0ULL - (unsigned long long) AsInt(a, e->line, L"unary '-'"));
+					{
+						long long iValue = AsInt(a, e->line, L"unary '-'");
+
+						// The one value whose negation does not exist. It used
+						// to come back as itself.
+						if (iValue == c_i64Min)
+						{
+							throw Error(0x80070057, L"integer overflow in unary '-'", e->line);
+						}
+						r.i = -iValue;
+					}
 					return r;
 				}
 			case EX_BINARY:
@@ -454,13 +653,59 @@ namespace Lang
 					FuncPtr fn(new FuncValue());
 					fn->params = e->params;
 					fn->body = e->fnBody;
-					fn->env = env;
+					fn->env = MakeClosureEnv(in, env, e->captures);
 					r.kind = VK_FUNC;
 					r.fn = fn;
 					return r;
 				}
 			}
 			return r;
+		}
+
+		// The Value an lvalue expression names, as a pointer into the
+		// environment, or NULL when the expression is not something that can be
+		// written in place.
+		//
+		// This exists because copy-on-write needs the write to land in the
+		// variable's own slot. Reading the base with EvalExpr would make a copy
+		// first, and writing to that copy would be thrown away -- the classic
+		// bug where "a[i] = x" quietly changes a temporary. Along the way down
+		// each shared container is cloned, so the write reaches one slot and the
+		// other holders keep the value they had.
+		Value *ResolveLValue(Interp& in, const ExprPtr& e, const EnvPtr& env)
+		{
+			if (e->kind == EX_VAR)
+			{
+				return LookupVar(env, e->name);
+			}
+			if (e->kind == EX_INDEX)
+			{
+				Value *base = ResolveLValue(in, e->items[0], env);
+				if (!base)
+				{
+					return NULL;
+				}
+				CloneIfShared(*base);
+				Value idx = EvalExpr(in, e->items[1], env);
+				if ((base->kind == VK_LIST) && base->list)
+				{
+					long long i = AsInt(idx, e->line, L"a list index");
+					if ((i < 0) || (i >= (long long) base->list->size()))
+					{
+						throw Error(0x80070057, L"list index out of range", e->line);
+					}
+					return &(*base->list)[(size_t) i];
+				}
+				if ((base->kind == VK_RECORD) && base->rec)
+				{
+					// A record is immutable, so its fields are not lvalues
+					// either -- "a.b[0] = x" must not reach into the record and
+					// write through a list it happens to hold.
+					throw Error(0x80070057, L"records are immutable", e->line);
+				}
+				throw Error(0x80070057, L"can only assign into a list element", e->line);
+			}
+			return NULL;
 		}
 
 		void AssignTarget(Interp& in, const ExprPtr& target, const Value& value, const EnvPtr& env)
@@ -472,24 +717,18 @@ namespace Lang
 				{
 					throw Error(0x80070002, String(L"assignment to undefined name '") + target->name + L"' (declare it with let)", target->line);
 				}
-				*found = CopyValue(value);
+				*found = value;
 				return;
 			}
 			if (target->kind == EX_INDEX)
 			{
-				Value base = EvalExpr(in, target->items[0], env);
-				Value idx = EvalExpr(in, target->items[1], env);
-				if ((base.kind == VK_LIST) && base.list)
+				Value *slot = ResolveLValue(in, target, env);
+				if (!slot)
 				{
-					long long i = AsInt(idx, target->line, L"a list index");
-					if ((i < 0) || (i >= (long long) base.list->size()))
-					{
-						throw Error(0x80070057, L"list index out of range", target->line);
-					}
-					(*base.list)[(size_t) i] = CopyValue(value);
-					return;
+					throw Error(0x80070057, L"can only assign into a list element", target->line);
 				}
-				throw Error(0x80070057, L"can only assign into a list element", target->line);
+				*slot = value;
+				return;
 			}
 			if (target->kind == EX_MEMBER)
 			{
@@ -512,7 +751,7 @@ namespace Lang
 			switch (s->kind)
 			{
 			case ST_LET:
-				env->vars[s->name] = CopyValue(EvalExpr(in, s->expr, env));
+				env->vars[s->name] = EvalExpr(in, s->expr, env);
 				return;
 			case ST_ASSIGN:
 				{
@@ -543,7 +782,7 @@ namespace Lang
 					for (size_t i = 0; i < it.list->size(); i++)
 					{
 						EnvPtr iter(new Env(env));
-						iter->vars[s->name] = CopyValue((*it.list)[i]);
+						iter->vars[s->name] = (*it.list)[i];
 						try
 						{
 							ExecBlock(in, s->body, iter);
@@ -582,13 +821,27 @@ namespace Lang
 					sig.value = s->expr ? EvalExpr(in, s->expr, env) : Value();
 					throw sig;
 				}
+			// Leaving a loop early. The signals are caught by the loop that owns
+			// them (ST_FOR and ST_WHILE below); the resolver refuses one written
+			// outside a loop, so nothing else can see them.
+			case ST_BREAK:
+				throw BreakSignal();
+			case ST_CONTINUE:
+				throw ContinueSignal();
 			case ST_FUNC:
 				{
 					Value v;
 					FuncPtr fn(new FuncValue());
 					fn->params = s->params;
 					fn->body = s->body;
-					fn->env = env;
+					// A function declared at the top level is a module table
+					// entry: it is looked up by name at call time, which is what
+					// lets two functions written one after the other call each
+					// other. Declared inside a body, it is a closure instead and
+					// carries the values it uses.
+					fn->env = (env == in.env)
+						? env
+						: MakeClosureEnv(in, env, s->captures);
 					v.kind = VK_FUNC;
 					v.fn = fn;
 					env->vars[s->name] = v;
@@ -605,12 +858,38 @@ namespace Lang
 					e.kind = VK_RECORD;
 					e.rec = RecordPtr(new std::vector<std::pair<String, Value> >());
 					{
-						Value code; code.kind = VK_INT; code.i = err.code;
-						Value msg;  msg.kind = VK_STR;  msg.s = err.message;
-						Value site; site.kind = VK_INT; site.i = err.line;
+						// SPEC-6 fixes the record at {code, message, line, verb}.
+						//
+						// *code* is an HRESULT. A verb that failed reports the
+						// raw Win32 code, which is a small positive number, so
+						// it is wrapped here -- at the boundary -- rather than at
+						// every throw site. A script comparing against an
+						// HRESULT then sees one, and `E_FAIL` and `2` stop being
+						// the same kind of thing.
+						long long iCode = (long long) err.code;
+						Value code;
+						Value msg;
+						Value site;
+						Value verb;
+
+						if ((iCode > 0) && (iCode <= 0xFFFF))
+						{
+							iCode = (long long) HRESULT_FROM_WIN32((DWORD) iCode);
+						}
+						code.kind = VK_INT; code.i = iCode;
+						msg.kind = VK_STR;  msg.s = err.message;
+						site.kind = VK_INT; site.i = err.line;
+						verb.kind = VK_STR;
+						// The verb the error was raised in, stamped on the way out
+						// of the host call; in.verb is the fallback for an error
+						// raised somewhere else while a verb was still running.
+						verb.s = !err.verb.empty()
+							? err.verb
+							: (in.verb.empty() ? String(L"(none)") : in.verb);
 						e.rec->push_back(std::make_pair(String(L"code"), code));
 						e.rec->push_back(std::make_pair(String(L"message"), msg));
 						e.rec->push_back(std::make_pair(String(L"line"), site));
+						e.rec->push_back(std::make_pair(String(L"verb"), verb));
 					}
 					EnvPtr handler(new Env(env));
 					handler->vars[s->name] = e;

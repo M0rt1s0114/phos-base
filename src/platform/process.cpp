@@ -1,16 +1,77 @@
-﻿// The process capability: EXEC, INIT, and the shell plumbing that hangs off them.
+// The process capability: EXEC, INIT, and the shell plumbing that hangs off
+// them.
+//
+// Written from the behaviour spec -- docs/COMMAND-MAP.md, the EXEC/INIT notes in
+// docs/COMPATIBILITY.md, and cases 010 / 027 / 030 -- rather than from the
+// reference implementation. The comments that were here before described the
+// reference's internals; these describe the contract we have to hold.
 
 // Publishing the letters this machine's CD-ROM and removable volumes have.
 // Windows knows; a script inside a PE does not, so they go into the environment
-// where an expansion can reach them, under the names it publishes:
+// where an expansion can reach them, under the reference's own names:
 //
 //   CDROM=D:  CDROM1=D:  CDROM2=E:  CDROM0=<count>
 //
 // and the same with USB for removable volumes. Scripts in the wild read those
 // names, so they stay. Returns how many drives of that kind were found.
 //
-// Note: the text form's INIT option "U" also promises to watch for a stick
+// Note: the reference's INIT option "U" also promises to watch for a stick
 // being plugged in. This publishes what is already there.
+// Wait for one handle, and keep the message pump alive while waiting.
+//
+// This matters because the chain runs in the process that owns the tray window.
+// A plain WaitForSingleObject stops that thread from dispatching anything for
+// the length of the wait, and a child that broadcasts to the session's top-level
+// windows -- AddFontResource does it, and so does anything that changes a system
+// setting -- blocks on this window until the wait is over. The wait would then
+// last until its timeout, every time, and a timeout of none would last for ever.
+//
+// The slice is short enough that a queued message is not held up noticeably, and
+// the caller's timeout is still the caller's: the slices add up to it.
+DWORD WaitPumping(HANDLE h, DWORD dwTimeout)
+{
+	DWORD dwElapsed = 0;
+
+	for (;;)
+	{
+		DWORD dwSlice = 100;
+		DWORD dwWait;
+
+		if (dwTimeout != INFINITE)
+		{
+			if (dwElapsed >= dwTimeout)
+			{
+				return WAIT_TIMEOUT;
+			}
+			if ((dwTimeout - dwElapsed) < dwSlice)
+			{
+				dwSlice = dwTimeout - dwElapsed;
+			}
+		}
+		// QS_ALLINPUT: posted, sent, timer, paint and input all wake it, which is
+		// what a window's thread has to answer.
+		dwWait = MsgWaitForMultipleObjects(1, &h, FALSE, dwSlice, QS_ALLINPUT);
+		if (dwWait == WAIT_OBJECT_0)
+		{
+			return WAIT_OBJECT_0;
+		}
+		if (dwWait == (WAIT_OBJECT_0 + 1))
+		{
+			MSG msg;
+
+			while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+		}
+		if (dwTimeout != INFINITE)
+		{
+			dwElapsed += dwSlice;
+		}
+	}
+}
+
 UINT InitDriveList(UINT pzDriveType)
 {
 	PCTSTR ptzPrefix = NULL;
@@ -30,7 +91,7 @@ UINT InitDriveList(UINT pzDriveType)
 
 	// GetLogicalDriveStrings hands back a double-NUL terminated run of "X:\"
 	// roots. Walk it by length, which is the walking rule the list itself uses.
-	TCHAR tzRoots[MAX_NAME] = {0};
+	TCHAR tzRoots[MAX_PATH] = {0};	// four characters per drive letter, twenty-six letters
 	if (!GetLogicalDriveStrings(_NumOf(tzRoots) - 1, tzRoots))
 	{
 		return 0;
@@ -75,183 +136,122 @@ UINT InitDriveList(UINT pzDriveType)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // EXEC's "$" modifier.
 //
-// The "$" modifier once patched the child process: it wrote a hand-encoded
-// 32-bit stub over that child's ExitWindowsEx so that "the user asked Windows to
-// shut down" would instead run a fixed command line. Two things about it:
+// The reference patched the child process: it wrote a hand-encoded 32-bit stub
+// over that child's ExitWindowsEx so that "the user asked Windows to shut down"
+// would instead run a fixed command line -- the stub carries the old program
+// name with it. Two things about it:
 //
-//   * only the 32-bit build ever had it; HookProcess has always been a no-op in
-//     the x64 build;
-//   * nothing uses it. Not the startup chain, not a shipped configuration.
+//   * the x64 build never had it either; HookProcess has always been a no-op
+//     there, see docs/ORACLE.md item 3 and docs/COMPATIBILITY.md;
+//   * nothing uses it. Not the startup chain, not one case under
+//     tools/testrig/cases, not the shipped disposition.
 //
-// So it is a no-op on both architectures: "$" reaches the same code path on
-// either one.
+// So it is a no-op on both architectures now. Re-deriving somebody else's
+// machine code would make it ours in form only, and it cannot be exercised on
+// the architecture the rig boots. "$" reaches exactly the code path the x64
+// build has always run. Recorded in docs/D-SLICES.md.
 VOID HookProcess(HANDLE hProcess)
 {
 	UNREFERENCED_PARAMETER(hProcess);
 }
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Execute command
-#define RunsKey TEXT("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run")
-
-// One "-xxx" option. The two the text form knows are the ones handled here; the
-// rest are skipped, and that silence is deliberate - see the note at the loop.
-static VOID ApplyExecOption(PCTSTR ptzFlag, STARTUPINFO *psi, PTSTR ptzWorkDir)
+// The keyboard hook's handle, read or written from two threads: the window
+// thread installs and removes it, and the shell thread (StartShell) asks whether
+// one is already in. Both sides use the interlocked forms -- a plain pointer
+// would be atomic in practice on the machines this runs on, but "in practice" is
+// not something the next reader should have to establish.
+static HHOOK ReadHookHandle(VOID)
 {
-	if (!UStrCmpI(ptzFlag, TEXT("-hide")))
-	{
-		psi->wShowWindow = SW_HIDE;
-	}
-	else if (!UStrCmpNI(ptzFlag, TEXT("-wd:"), 4))
-	{
-		UStrCopy(ptzWorkDir, UStrTrim((PTSTR) (ptzFlag + 4)));
-	}
+	return (HHOOK) InterlockedCompareExchangePointer(
+		(PVOID volatile *) &g_hHook, NULL, NULL);
 }
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-HRESULT Exec(CoreContext& ctx, PTSTR ptzCmd)
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Start a program.
+//
+// Two things in this process start one: the keyboard hook below, which wants the
+// task manager up the moment Ctrl+Alt+Delete is pressed, and MainThread putting
+// the shell back after it went away. Neither reads a result.
+//
+// What used to be here was the text EXEC: its modifier run ('!', '@', '=', '$',
+// '&'), its "-hide" and "-wd:" options, and a branch that wrote a command line
+// into the Run key instead of running it. `proc.run` and `boot.add_run` own those
+// jobs in the language now, so what is left is the launch itself.
+//
+// The command line goes to CreateProcess as it stands: a quoted
+// "X:\Program Files\..." arrives whole instead of being trimmed.
+VOID StartProgram(PCTSTR ptzCmd)
 {
 	STARTUPINFO si = {0};
-	PROCESS_INFORMATION pi = {0};
+	PROCESS_INFORMATION pi;
+	TCHAR tzCmd[MAX_STR];
+
+	if (!UStrCopyTo(tzCmd, ptzCmd))
+	{
+		return;			// a line that cannot fit is not run
+	}
 
 	si.cb = sizeof(si);
 	si.lpDesktop = TEXT("WinSta0\\Default");
 	si.dwFlags = STARTF_USESHOWWINDOW;
 	si.wShowWindow = SW_NORMAL;
 
-	BOOL bWait = FALSE;
-	BOOL bHook = FALSE;
-	BOOL bRunKey = FALSE;
-	TCHAR tzWorkDir[MAX_PATH];
-
-	tzWorkDir[0] = 0;			// empty means "inherit the current directory"
-
-	// The one-character modifiers. They are a run of leading characters, so
-	// "EXEC !=prog" is wait plus hide, in either order.
+	if (CreateProcess(NULL, tzCmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
 	{
-		BOOL bMoreMods = TRUE;
-
-		while (bMoreMods)
-		{
-			switch (*ptzCmd)
-			{
-			case '!':                       // hidden
-				si.wShowWindow = SW_HIDE;
-				break;
-			case '@':                       // the logon desktop
-				si.lpDesktop = TEXT("WinSta0\\WinLogon");
-				break;
-			case '=':
-				bWait = TRUE;
-				break;
-			case '$':
-				bHook = TRUE;
-				break;
-			case '&':
-				bRunKey = TRUE;
-				break;
-			default:
-				bMoreMods = FALSE;
-				break;
-			}
-			if (bMoreMods)
-			{
-				ptzCmd++;
-			}
-		}
-	}
-
-	// Named options, the form the text form writes as "EXEC -hide prog args": a run
-	// of "-xxx" tokens in front of the command line. An option that is not
-	// implemented is skipped, which is what the text form does - a typo is
-	// therefore silent, and that is worth knowing before trusting one.
-	while (*ptzCmd == '-')
-	{
-		PTSTR ptzNext = UStrChr(ptzCmd, ' ');
-		PTSTR ptzEnd = ptzNext ? ptzNext : (ptzCmd + UStrLen(ptzCmd));
-		TCHAR tzFlag[MAX_NAME];
-		UINT uLen = (UINT) (ptzEnd - ptzCmd);
-
-		if (uLen >= MAX_NAME)
-		{
-			uLen = MAX_NAME - 1;
-		}
-		UStrCopyN(tzFlag, ptzCmd, uLen + 1);
-		ApplyExecOption(tzFlag, &si, tzWorkDir);
-
-		if (!ptzNext)
-		{
-			ptzCmd = ptzEnd;
-			break;
-		}
-		ptzCmd = UStrTrim(ptzNext + 1);
-	}
-
-	// "&" stores the command line instead of running it, under its last path
-	// component. "=" picks the machine-wide list rather than the current user's,
-	// which is the only thing "=" means here.
-	if (bRunKey)
-	{
-		PTSTR ptzName = UStrRChr(ptzCmd, '\\');
-		HKEY hRoot = bWait ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
-
-		ptzName = ptzName ? (ptzName + 1) : ptzCmd;
-		return SHSetValue(hRoot, RunsKey, ptzName, REG_SZ, ptzCmd, UStrLen(ptzCmd) * sizeof(TCHAR));
-	}
-
-	// The command line goes to CreateProcess as it stands. That is the point of
-	// routing the process capability around the text layer: a quoted
-	// "X:\Program Files\..." arrives whole instead of being trimmed.
-	BOOL bResult = CreateProcess(NULL, ptzCmd, NULL, NULL, FALSE, 0, NULL,
-		tzWorkDir[0] ? tzWorkDir : NULL, &si, &pi);
-
-	if (!bResult)
-	{
-		// The Win32 error from CreateProcess is handed back rather than a bare
-		// failure, because scripts branch on it: a program that is not there is 2
-		// (file not found), not 1.
-		return (HRESULT) GetLastError();
-	}
-
-	// Both handles are ours from here on. The guard is so that the wait path and
-	// the hook path cannot leave one behind.
-	struct CloseProcessHandles
-	{
-		PROCESS_INFORMATION *p;
-		~CloseProcessHandles()
-		{
-			CloseHandle(p->hThread);
-			CloseHandle(p->hProcess);
-		}
-	} closeOnExit = {&pi};
-
-	if (bHook)
-	{
-		Sleep(1500);
-		HookProcess(pi.hProcess);
-		if (!g_hHook)
-		{
-			SendMessage(MainWindowHwnd, FindShellMsg, 1, 0);
-		}
-		if (TrayIcon)
-		{
-			SendMessage(MainWindowHwnd, FindShellMsg, 2, 0);
-		}
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
 	}
 
 	// WinPE runs out of memory long before it runs out of anything else, and the
-	// child just took a copy of our working set. The text form trims after every
-	// spawn; so do we.
+	// child just took a copy of our working set.
 	SetProcessWorkingSetSize(CurrentProcess, (SIZE_T) -1, (SIZE_T) -1);
+}
 
-	if (bWait)
+// Start the PE's shell and hand it to the tray.
+//
+// The old form spelled this "$<path>": start it, give it a moment, hook the
+// child, and tell the tray window to take the keyboard hook and put the icon up.
+// That whole sequence is this function now -- there is no modifier to spell and
+// no text to parse. The 1.5 seconds is the flat wait the text path had.
+HRESULT StartShell(PCTSTR ptzShell)
+{
+	STARTUPINFO si = {0};
+	PROCESS_INFORMATION pi;
+	TCHAR tzCmd[MAX_STR];
+
+	if (!UStrCopyTo(tzCmd, ptzShell))
 	{
-		WaitForSingleObject(pi.hProcess, INFINITE);
+		return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
 	}
 
+	si.cb = sizeof(si);
+	si.lpDesktop = TEXT("WinSta0\\Default");
+	si.dwFlags = STARTF_USESHOWWINDOW;
+	si.wShowWindow = SW_NORMAL;
+
+	if (!CreateProcess(NULL, tzCmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+	{
+		return (HRESULT) GetLastError();
+	}
+
+	Sleep(1500);
+	HookProcess(pi.hProcess);
+	if (!ReadHookHandle())
+	{
+		SendMessage(MainWindowHwnd, FindShellMsg, 1, 0);
+	}
+	if (TrayIcon)
+	{
+		SendMessage(MainWindowHwnd, FindShellMsg, 2, 0);
+	}
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	SetProcessWorkingSetSize(CurrentProcess, (SIZE_T) -1, (SIZE_T) -1);
 	return S_OK;
 }
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -279,7 +279,7 @@ LRESULT CALLBACK InitProc(INT iCode, WPARAM wParam, LPARAM lParam)
 {
 	if (IsTaskManagerKey(iCode, wParam, lParam))
 	{
-		Exec(g_ctx, TASKMANAGER);
+		StartProgram(TASKMANAGER);
 		return TRUE;                    // handled: the system does not see it
 	}
 	return CallNextHookEx(g_hHook, iCode, wParam, lParam);
@@ -295,17 +295,19 @@ VOID InstallHookKeyBoard(BOOL Install)
 {
 	if (Install)
 	{
-		if (!g_hHook)
+		if (!ReadHookHandle())
 		{
-			g_hHook = SetWindowsHookEx(WH_KEYBOARD_LL, InitProc, g_hInst, 0);
+			InterlockedExchangePointer((PVOID volatile *) &g_hHook,
+				SetWindowsHookEx(WH_KEYBOARD_LL, InitProc, g_hInst, 0));
 		}
 		return;
 	}
 
-	if (g_hHook)
+	if (ReadHookHandle())
 	{
 		UnhookWindowsHookEx(g_hHook);
-		g_hHook = NULL;                 // the flag the tray reads back, either way
+		// The flag the tray reads back, either way.
+		InterlockedExchangePointer((PVOID volatile *) &g_hHook, NULL);
 	}
 }
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -317,74 +319,25 @@ VOID InstallHookKeyBoard(BOOL Install)
 // later.
 //
 // The flags are substrings, not a parsed list: "C", "I", "K" and "U" are looked
-// for anywhere in the argument and in any case, which is how the text form looked
+// for anywhere in the argument and in any case, which is how the reference looked
 // for them. None of these steps is INIT's answer: the DLL calls below can fail on
-// an image with no DllInstall at all, and INIT still answers 0.
-HRESULT Init(CoreContext& ctx, PTSTR ptzCmd)
-{
-	TCHAR tzPath[MAX_NAME];
-
-	// An empty name with the init flag set is how the built-in directory
-	// variables (%Desktop%, %Programs%, %StartMenu%, ...) get established, and
-	// they go into the *process* environment, not just our own variable table,
-	// so a child process inherits them.
-	UStrCopy(tzPath, TEXT(""));
-	SetEnvironment(tzPath, FALSE, TRUE);
-
-	// Three opportunistic shell hooks, their answers dropped on purpose: browseui
-	// and shdocvw have no DllInstall in this PE at all - the text form answers
-	// 127 there too - and adding the results up would report 0x8004, two
-	// E_NOINTERFACE values summed into one HRESULT.
-	{
-		static PCTSTR c_ShellDlls[] = { TEXT("SHELL32"), TEXT("BROWSEUI"), TEXT("SHDOCVW") };
-
-		for (UINT i = 0; i < _NumOf(c_ShellDlls); i++)
-		{
-			UStrPrint(tzPath, TEXT("%s%s"), c_ShellDlls[i], pzStrDLLInstall);
-			CallDll(tzPath);
-		}
-	}
-
-	// C publishes the CD-ROM letters, U the removable ones, and I and K are the
-	// two marks the tray code reads back later: put the icon up, install the
-	// keyboard hook.
-	if (StrStrI(ptzCmd, TEXT("C")))
-	{
-		InitDriveList(DRIVE_CDROM);
-	}
-	if (StrStrI(ptzCmd, TEXT("I")))
-	{
-		BOOL bIcon = TRUE;
-
-		SHSetValue(HKEY_LOCAL_MACHINE, PELOGON, TEXT("TrayIcon"), REG_DWORD, &bIcon, sizeof(bIcon));
-	}
-	if (StrStrI(ptzCmd, TEXT("K")))
-	{
-		BOOL bHook = TRUE;
-
-		SHSetValue(HKEY_LOCAL_MACHINE, PELOGON, TEXT("InitProc"), REG_DWORD, &bHook, sizeof(bHook));
-	}
-	if (StrStrI(ptzCmd, TEXT("U")))
-	{
-		InitDriveList(DRIVE_REMOVABLE);
-	}
-
-	g_bInit = TRUE;
-	return S_OK;
-}
+// an image with no DllInstall at all (case 039) and INIT still answers 0.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// The shell handoff, as recorded under HKLM\SOFTWARE\PELOGON. The key and its
-// value names are read by scripts and by the tray code, so they are fixed.
+// The shell handoff, as recorded under HKLM\SOFTWARE\Phosphor -- this program's
+// own key and not an upstream one. The *value names* are fixed, because the
+// tray code, the shell watcher and the test rig read them; the key itself is
+// ours to name. See docs/SPEC-DECISIONS.md, SPEC-11.
 #define PESHELL TEXT("Shell")
 void GetShell(bool DeleteSettingKey)
 {		
 	if (DeleteSettingKey) 
 	{		
-		SHSetValue(HKEY_LOCAL_MACHINE, PELOGON,TEXT("SysShell"), REG_SZ, MyShell, UStrLen(MyShell) * sizeof(TCHAR));
-		SHDeleteValue(HKEY_LOCAL_MACHINE, PELOGON,PESHELL);
+		SHSetValue(HKEY_LOCAL_MACHINE, PHOS_STATE,TEXT("SysShell"), REG_SZ, MyShell,
+			(UStrLen(MyShell) + 1) * sizeof(TCHAR));
+		SHDeleteValue(HKEY_LOCAL_MACHINE, PHOS_STATE,PESHELL);
 	}
 	else
 	{	
@@ -392,16 +345,17 @@ void GetShell(bool DeleteSettingKey)
 		DWORD dwType=REG_SZ;
 		DWORD dwSize=MAX_PATH;
 
-		SHGetValue(HKEY_LOCAL_MACHINE,PELOGON, PESHELL,&dwType, &MyShell[0], &dwSize);
+		SHGetValue(HKEY_LOCAL_MACHINE,PHOS_STATE, PESHELL,&dwType, &MyShell[0], &dwSize);
 
-		// Each value is read into a buffer of its own size. One size for all
-		// three would tell the registry it may write up to MAX_PATH bytes for
-		// the two DWORDs, whose buffers are four bytes.
+		// Each value is read into a buffer of its own size. The reference kept
+		// the string's size in dwSize for all three, which for the two DWORDs
+		// meant telling the registry it may write up to MAX_PATH bytes into a
+		// four-byte BOOL.
 		dwType=REG_DWORD;
 		dwSize=sizeof(TrayIcon);
-		SHGetValue(HKEY_LOCAL_MACHINE, PELOGON, TEXT("TrayIcon"), &dwType, &TrayIcon, &dwSize);
+		SHGetValue(HKEY_LOCAL_MACHINE, PHOS_STATE, TEXT("TrayIcon"), &dwType, &TrayIcon, &dwSize);
 		dwSize=sizeof(bInitProc);
-		SHGetValue(HKEY_LOCAL_MACHINE, PELOGON, TEXT("InitProc"), &dwType, &bInitProc, &dwSize);
+		SHGetValue(HKEY_LOCAL_MACHINE, PHOS_STATE, TEXT("InitProc"), &dwType, &bInitProc, &dwSize);
 
 		if ((!g_hHook) && (bInitProc) && (MainWindowHwnd))
 		{

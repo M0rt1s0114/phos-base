@@ -22,6 +22,25 @@ HRESULT OutPutText(HDC hDC)
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+// Wait for the next message, or dwSlice milliseconds, then run what is queued.
+//
+// This is the "sleep, but keep the window alive" shape the loops below need: a
+// bare PeekMessage/DispatchMessage pair with neither a wait nor a sleep spins a
+// core for the whole delay, and both the splash and the boot chain sit in these
+// loops. QS_ALLINPUT so a paint counts as something to wake up for -- the splash
+// text is drawn by this thread, so sleeping through the paint would wait out the
+// whole timeout every time.
+static VOID PumpMessages(DWORD dwSlice)
+{
+	MSG msg;
+
+	MsgWaitForMultipleObjectsEx(0, NULL, dwSlice, QS_ALLINPUT, 0);
+	while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+	{
+		DispatchMessage(&msg);
+	}
+}
+
 // A millisecond delay that keeps the message queue moving: this runs on the thread
 // that owns the splash window, so sleeping without pumping would freeze it.
 HRESULT TimeDelay(DWORD WaitTime)
@@ -30,10 +49,9 @@ HRESULT TimeDelay(DWORD WaitTime)
 
 	while ((GetTickCount() - dwStart) < WaitTime)
 	{
-		MSG msg;
-
-		PeekMessage(&msg, NULL, 0, 0, PM_REMOVE);
-		DispatchMessage(&msg);
+		// 10 ms: short enough that a paint is not visibly late, long enough that
+		// this thread is not the thing keeping a core busy.
+		PumpMessages(10);
 	}
 	return S_OK;
 }
@@ -41,12 +59,13 @@ HRESULT TimeDelay(DWORD WaitTime)
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-PTSTR UStrToMD5(PTSTR);
 
-// bRealBoot gates the shell registration in SHEL and the wallpaper write in WALL,
-// so it is set here and not derived from the text: a value derived from a
-// comparison against one particular string would switch the shell handover off
-// as soon as that string changed.
+// Upstream compared the drawn LOGO text against the MD5 of its own string and
+// only then set bRealBoot - and bRealBoot gates the shell registration in SHEL
+// and the wallpaper write in WALL. That is the same "is this the author's own
+// build" question as CheckMERes, and about our own text it can only answer no,
+// which would switch the shell handover off the moment the LOGO text stopped
+// being his. For our own text the answer is yes.
 void SetFirstTextDone(PTSTR ptzText)
 {
 	UNREFERENCED_PARAMETER(ptzText);
@@ -64,12 +83,10 @@ void SetFirstTextDone(PTSTR ptzText)
 void WaitDrawText(void)
 {
 	DWORD dwStarted = GetTickCount();
-	MSG msg;
 
 	while ((((GetTickCount() - dwStarted) < 500) && (!tzDrawTextDone)) || (!bRealBoot))
 	{
-		PeekMessage(&msg,NULL,0,0,PM_REMOVE);
-		DispatchMessage(&msg);
+		PumpMessages(10);
 	}
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -169,20 +186,16 @@ INT_PTR CALLBACK LogoProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 
 /////////////////////////////////////////////////////////////////////////////
-HRESULT Logo(CoreContext& ctx, PTSTR);
 HRESULT Boot(BOOL);
 // Wait for the splash window to appear. The counter starts below zero, so the wait
 // is RETRY + 180 steps of 50ms; when no window ever turns up, the error box takes
 // over and offers a reboot rather than leaving a black screen.
-void WaitLogo(BOOL ReDoLoad)
+//
+// It used to take "redraw the splash first" as an argument, which the one caller
+// never asked for: the branch went through the text LOGO command with an empty
+// image and was dead.
+void WaitLogo(void)
 {
-	TCHAR tzLogoCommand[MAX_NAME] = TEXT(",0");
-
-	if (ReDoLoad)
-	{
-		Logo(g_ctx, tzLogoCommand);
-	}
-
 	{
 		INT i = -180;
 
@@ -205,7 +218,7 @@ void WaitLogo(BOOL ReDoLoad)
 
 		LoadString(g_hInst, IDS_LogoErr, tzErr, _NumOf(tzErr));
 		LoadString(g_hInst, IDS_LogoErrTip, tzErrTip, _NumOf(tzErrTip));
-		Boot(MessageBox(s_hLogo, tzErr, tzErrTip, 20) == 6);
+		Boot(MessageBox(s_hLogo, tzErr, tzErrTip, MB_YESNO | MB_ICONHAND) == IDYES);
 	}
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -286,19 +299,27 @@ BOOL ParentProcessIsME(void)
 	PTSTR ptzParent = FindProcName((DWORD) FindProc(NULL), ParentProcessName,
 		_NumOf(ParentProcessName));
 
-	// This module's own image name counts, so a second copy started by a script is
-	// recognised. Two older names are accepted as well, for callers and copies that
-	// still use them. Getting this wrong is silent rather than loud: it flips
-	// bRealBoot, which gates the shell registration in SHEL.
+	// "Ours" is this image's own module name: the product is phos.exe, and a
+	// second copy started by a script has to be recognised as ours. The two
+	// literal names that used to be listed here -- PECMD.EXE and PELOGON.EXE --
+	// are gone: the release image carries neither, so all they could still match
+	// was somebody else's file. Getting this wrong is silent rather than loud:
+	// it flips bRealBoot, which is what gates the shell registration in SHEL.
 	tzSelfName[0] = 0;
 	if (GetModuleFileName(g_hInst, tzSelf, _NumOf(tzSelf)))
 	{
 		PTSTR pSlash = UStrRChr(tzSelf, '\\');
-		UStrCopy(tzSelfName, pSlash ? (pSlash + 1) : tzSelf);
+
+		// Same rule as the caller's buffer above: a name that does not fit is
+		// answered with nothing rather than with a shortened one. The leaf of a
+		// MAX_PATH path can be far longer than MAX_NAME, so this is not a copy
+		// that can be assumed to fit.
+		if (!UStrCopyTo(tzSelfName, pSlash ? (pSlash + 1) : tzSelf))
+		{
+			tzSelfName[0] = 0;
+		}
 	}
 	apszOurs[uCount++] = tzSelfName;
-	apszOurs[uCount++] = TEXT("PECMD.EXE");
-	apszOurs[uCount++] = TEXT("PELOGON.EXE");
 
 	if (ptzParent)
 	{
@@ -318,8 +339,14 @@ BOOL ParentProcessIsME(void)
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-HRESULT Text(CoreContext& ctx, PTSTR);
+// The shell's image name. The "is the desktop up yet" test below uses it, and so
+// does the tray's watcher.
 TCHAR EXPLORER[] = TEXT("EXPLORER.EXE");
+// Defined below, next to the text it draws. Declared here because the splash's
+// own description is drawn before it.
+HRESULT SetLogoText(PCTSTR ptzText, DWORD dwColor, INT iLeft, INT iTop, INT iRight,
+	INT iBottom, INT iSize, BOOL bKeepPrevious);
+
 // The build's own line in the corner of the splash, drawn only when this process is
 // the one the shell chain started and explorer is not up yet. It brings its own
 // font and geometry, which are parked and restored around it.
@@ -341,20 +368,24 @@ void DisplayAppDesc(void)
 	s_rtText.bottom = 48;
 	s_crText = 0xFFFFFF;
 	tzDrawTextDone = FALSE;
-	Text(g_ctx, LogoDescText);
+	// The settings just written are the whole of it: the text capability's
+	// defaults, spelled out. It used to go through the text TEXT command, which
+	// parsed the description for field letters (L/T/R/B/$/*/#) and would have cut
+	// it short at one of them -- the description has none today, and a future one
+	// that did would have been silently truncated rather than drawn.
+	SetLogoText(LogoDescText, 0, -1, -1, -1, -1, -1, FALSE);
 	SaveUserTextData(FALSE);
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-PTSTR UStrToMD5(PTSTR);
-// The splash-text capability. Text() below is the text front end.
+// The splash-text capability. Text() below is the legacy text front end.
 //
-// A setting the caller does not name is left alone, which is how the text
+// A setting the caller does not name is left alone, which is how the legacy
 // parser behaves: every TEXT call reuses whatever the previous one left behind.
 // -1 means "not named" for the numbers, and a colour of 0 says the same,
-// because the text form only accepts a positive one.
+// because the reference only accepts a positive one.
 HRESULT SetLogoText(PCTSTR ptzText, DWORD dwColor, INT iLeft, INT iTop, INT iRight,
 	INT iBottom, INT iSize, BOOL bKeepPrevious)
 {
@@ -382,8 +413,11 @@ HRESULT SetLogoText(PCTSTR ptzText, DWORD dwColor, INT iLeft, INT iTop, INT iRig
 	bClear = (*ptzBody == 0);
 	ptzBody = USplitStr(ptzBody);
 
-	// "Do not use this text" is written as a test rather than folded into the
-	// pointer: folding needs a pointer to fit in a DWORD, which is not true on x64.
+	// Upstream folds "do not use this text" into the pointer by multiplying it
+	// by the flag. That needs a pointer to fit in a DWORD, so on x64 it handed
+	// UStrCopy a truncated address - an access violation, every time. Write what
+	// the arithmetic meant instead: copy the string, or leave the destination
+	// empty.
 	//
 	// s_tzText is eighty characters and lives next to the colour, the font size
 	// and the font handle in the boot context: an over-long splash line used to
@@ -440,83 +474,18 @@ HRESULT SetLogoText(PCTSTR ptzText, DWORD dwColor, INT iLeft, INT iTop, INT iRig
 //
 // The field list is uppercased only when there is a '#', because the uppercasing
 // starts at it -- so "TEXT helloL10" works and "TEXT hellol10" does not. That is
-// the compatible shape, kept as it is.
+// the reference's shape, kept as it is.
 //
 // '*' is the odd one: it takes no value, and means "do not clear what was drawn
 // before", which is how a caller stacks lines.
-HRESULT Text(CoreContext& ctx, PTSTR ptzCmd)
-{
-	BOOL bKeepPrevious = FALSE;
-	DWORD dwColor = 0;
-	INT iLeft = -1, iTop = -1, iRight = -1, iBottom = -1, iSize = -1;
-	PTSTR ptzAdd = NULL;
-	PTSTR ptzParam;
-	PTSTR p;
-
-	p = UStrRChr(ptzCmd, '#');
-	if (p)
-	{
-		UStrToUpper(p);
-		ptzAdd = p;
-		{
-			INT pzTemp = UStrToInt(++p);
-
-			if (pzTemp > 0)
-			{
-				dwColor = (DWORD) pzTemp;
-			}
-		}
-		ptzParam = p;
-	}
-	else
-	{
-		ptzParam = ptzCmd;
-	}
-
-	// One search per field letter, in this order, and the first hit decides
-	// where the text stops.
-	{
-		static const TCHAR c_fields[] = { 'L', 'T', 'R', 'B', '$' };
-		INT *piFields[] = { &iLeft, &iTop, &iRight, &iBottom, &iSize };
-
-		for (UINT i = 0; i < _NumOf(c_fields); i++)
-		{
-			p = UStrRChr(ptzParam, c_fields[i]);
-			if (p)
-			{
-				if (!ptzAdd)
-				{
-					ptzAdd = p;
-				}
-				*piFields[i] = (INT) UStrToInt(++p);
-			}
-		}
-	}
-
-	p = UStrRChr(ptzParam, '*');
-	if (p)
-	{
-		bKeepPrevious = TRUE; // keep what was drawn before
-		if (!ptzAdd)
-		{
-			ptzAdd = p;
-		}
-	}
-
-	if (ptzAdd)
-	{
-		*ptzAdd = 0;
-	}
-
-	return SetLogoText(ptzCmd, dwColor, iLeft, iTop, iRight, iBottom, iSize, bKeepPrevious);
-}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // The splash window's caption travels inside a hand-built DLGTEMPLATE, so each
-// string is a fixed-size array. The array is sized from the literal itself, so
-// the count cannot drift; the zero padding after it is part of the template.
+// string is a fixed-size array: the caption used to be "PECMD", exactly filling
+// six WCHARs. It carries our name now, and the array is sized from the literal
+// so the count cannot drift. The zero padding after it is unchanged.
 const struct {DLGTEMPLATE dtDlg; WCHAR  wzMenu[1]; WCHAR wzClass[1]; WCHAR wzCaption[_NumOf(L"Phosphor")]; WORD wEnd[6];} c_dtLogo =
 {{WS_POPUP | WS_VISIBLE | DS_CENTER, WS_EX_LAYERED | WS_EX_TOOLWINDOW, 0, 0, 0, 400, 300}, 0, 0, L"Phosphor"};
 // LOGO <image>[,<background>] -- the splash.

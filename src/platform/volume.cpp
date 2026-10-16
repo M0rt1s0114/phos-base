@@ -79,14 +79,6 @@ BOOL DismountVolume(HANDLE hVolume)
 // Ask the device not to let the media be pulled by hand, or let it again. The
 // eject sequence turns it on while it works and off just before it ejects, so a
 // running eject cannot be interrupted by somebody pressing the button.
-BOOL PreventRemovalOfVolume(HANDLE hVolume, BOOL fPreventRemoval)
-{
-	PREVENT_MEDIA_REMOVAL stRemoval;
-
-	stRemoval.PreventMediaRemoval = (BOOLEAN) fPreventRemoval;
-	return DeviceIoControl(hVolume, IOCTL_STORAGE_MEDIA_REMOVAL, &stRemoval,
-		sizeof(stRemoval), NULL, 0, NULL, NULL);
-}
 /////////////////////////////////////////////////////////////////////////////
 
 
@@ -156,19 +148,18 @@ BOOL EjectVolume(WCHAR cDriveLetter, BOOL UsbDriver)
 
 
 /////////////////////////////////////////////////////////////////////////////
-// The eject capability. Ejec() below is the text front end.
+// The eject capability.
 //
-// ptzDrive names one drive ("D:"). NULL means "every drive the two flags
-// allow", and a NON-NULL but empty name is a separate thing: Ejec() clears the
-// letter of a named drive when the line also named a kind (C-/U-), which
-// leaves the pointer in place over an empty string. The loop tests the
-// pointer, not the text, so that case names a drive, finds nothing ejectable
-// there and gives up -- which is the shape a boot configuration runs into.
+// ptzDrive names one drive ("D:"), or is NULL for "every drive the two flags
+// allow".
 //
-// A drive that will not let go is retried: uRetry times when the text form
-// said "#N", and by asking otherwise, because a drive still held open is
-// usually something the person in front of the machine can close.
-HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB)
+// A drive that will not let go is retried uRetry times. bAsk is the tray
+// menu's mode and only the tray menu's: a person clicked "eject" and is
+// standing there, so asking "try again?" is a question they can answer. A
+// script gets one try and an answer -- SPEC-3's "unattended never shows a
+// dialog" means a prompt in this loop is a PE that waits for a click nobody
+// will make (the audit's R-06).
+HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB, BOOL bAsk)
 {
 	UINT uType;
 	BOOL bExist = FALSE;
@@ -189,7 +180,7 @@ HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB)
 		}
 		else
 		{
-			TCHAR tzDrives[MAX_NAME];
+			TCHAR tzDrives[MAX_PATH];	// four characters per drive letter, twenty-six letters
 
 			GetLogicalDriveStrings(_NumOf(tzDrives), tzDrives);
 			for (PTSTR p = tzDrives; *p; p += UStrLen(p) + 1)
@@ -219,7 +210,7 @@ HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB)
 				break;      // out of tries
 			}
 		}
-		else
+		else if (bAsk)
 		{
 			TCHAR tzAsk[MAX_NAME];
 			TCHAR tzTitle[MAX_NAME];
@@ -231,84 +222,30 @@ HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB)
 				break;      // the operator is done with it
 			}
 		}
+		else
+		{
+			break;      // one try, and a script is never asked for a click
+		}
 	}
 	return bDone ? S_OK : S_FALSE;
 }
 
-// EJEC - push media out. The shapes the text form takes:
-//
-//   EJEC             every drive that can be pushed out
-//   EJEC C-          CD-ROMs only
-//   EJEC U-          removable media only
-//   EJEC D:          that drive, whatever kind it is
-//   EJEC ...#N       try N times instead of asking
-//
-// C- and U- are looked for anywhere in the line rather than parsed off the
-// front, because that is how they were always written: each one asks for its
-// own kind, and a line with neither (or with both) asks for both. The pointer
-// StrStrI answers is tested for presence, not turned into a BOOL: the low
-// half of a 64-bit pointer is not an answer to "was it found".
-HRESULT Ejec(CoreContext& ctx, PTSTR ptzCmd)
-{
-	UINT uRetry = 0;
-	UINT uType;
-	BOOL bCDROM = TRUE;
-	BOOL bUSB = TRUE;
-	PTSTR ptzDrive;
-	PTSTR ptzCount;
-
-	ptzCmd = UStrTrim(ptzCmd);
-	UStrToUpper(ptzCmd);
-
-	ptzCount = UStrChr(ptzCmd, '#');
-	if (ptzCount)
-	{
-		*ptzCount = 0;
-		uRetry = UStrToInt(ptzCount + 1);
-	}
-
-	if (ptzCmd[0])
-	{
-		bCDROM = (StrStrI(ptzCmd, TEXT("C-")) != NULL);
-		bUSB = (StrStrI(ptzCmd, TEXT("U-")) != NULL);
-	}
-
-	// A named drive is the letter just before the colon.
-	ptzDrive = UStrChr(ptzCmd, ':');
-	if (ptzDrive)
-	{
-		ptzDrive--;
-		uType = MyGetDriveType(ptzDrive);
-		if (bCDROM || bUSB)
-		{
-			// The line already named the kind it wants, so the name is not what
-			// matters: clear the letter and let every drive be walked.
-			*ptzDrive = 0;      // every ejectable drive
-		}
-		if (uType == DRIVE_REMOVABLE)
-		{
-			bUSB = TRUE;        // the named stick
-		}
-		if (uType == DRIVE_CDROM)
-		{
-			bCDROM = TRUE;      // the named CD-ROM
-		}
-	}
-
-	return EjectDrives(ptzDrive, uRetry, bCDROM, bUSB);
-}
+// The legacy front end for this was "EJEC [C-|U-|D:][#N]". Callers now take the
+// capability directly: `disk.eject({drive, cdrom, usb, retry})` from a script,
+// and EjectDrives from the tray menu, whose two items name the two kinds.
 /////////////////////////////////////////////////////////////////////////////
 
 
 /////////////////////////////////////////////////////////////////////////////
 // Where the temporary folder is: HKCU\Environment first, because in a PE the
 // process environment and the stored one are not always the same thing -- which
-// is what the text form was working around. TEMP, then TMP if that one is
+// is what the legacy command was working around. TEMP, then TMP if that one is
 // not set. Either may be written with variables in it, so what comes back is
 // expanded. FALSE means neither key held anything.
 //
 // When neither key is set there is nothing to empty, and the cleanup says so
-// with S_FALSE rather than falling back to the Windows directory.
+// with S_FALSE rather than falling back to the Windows directory the way the
+// reference does. Case 050 and known-differences.txt carry that difference.
 BOOL StoredTempFolder(PTSTR ptzBuf, DWORD cchBuf)
 {
 	TCHAR tzStored[MAX_PATH] = {0};
@@ -325,6 +262,25 @@ BOOL StoredTempFolder(PTSTR ptzBuf, DWORD cchBuf)
 	}
 
 	ExpandEnvironmentStrings(tzStored, ptzBuf, cchBuf);
+
+	// "%s\*.*" is built from this a few lines down. An empty value makes that
+	// "\*.*", the root of whatever drive is current, and a bare "X:" does the
+	// same thing with a letter in front. Both are refused here rather than left
+	// to the delete guard: the caller is asking for a folder, and there is no
+	// folder to answer with.
+	{
+		PTSTR p = ptzBuf + UStrLen(ptzBuf);
+
+		while ((p > ptzBuf) && ((p[-1] == '\\') || (p[-1] == '/')))
+		{
+			p--;
+		}
+		if (((p - ptzBuf) <= 2) || !UDirExist(ptzBuf))
+		{
+			ptzBuf[0] = 0;
+			return FALSE;
+		}
+	}
 	return TRUE;
 }
 
@@ -337,10 +293,11 @@ HRESULT CleanTempFolder(VOID)
 	TCHAR tzSpec[MAX_STR];
 
 	// Nothing stored means nothing to empty, and this says so with S_FALSE. The
-	// alternative answers 0 there, because its fallback reaches the Windows
-	// directory -- so its "success" means it emptied X:\Windows. That is not worth
-	// matching for a result code: in a PE whose chain has run, the keys are set and
-	// both answers are 0.
+	// reference answers 0 there, because its own fallback reaches the Windows
+	// directory -- so its "success" means it emptied X:\Windows. That is not
+	// worth matching for a result code: in a PE whose chain has run the keys are
+	// set and both answers are 0. Case 050 records the difference, and it is in
+	// tools/testrig/known-differences.txt.
 	if (!StoredTempFolder(tzPath, _NumOf(tzPath)))
 	{
 		return S_FALSE;
@@ -354,131 +311,105 @@ HRESULT CleanTempFolder(VOID)
 	return FsDelete(tzSpec);
 }
 
-// TEMP [@] [DELETE|SETTING]
+// The temporary folder, as the tray menu's two items.
 //
-// With no option it reports where the temporary folder is and stops there.
-// "DELETE" empties it, and "SETTING" asks the shell's folder picker for a new
-// one and writes that into both environment keys and the process.
-//
-// The leading "@" answers the confirmation on the user's behalf. That is what
-// lets the DELETE path run with nobody at the machine; SETTING cannot be driven
-// that way, because the picker it opens is a dialog of its own.
-HRESULT Temp(CoreContext& ctx, PTSTR ptzCmd)
+// The legacy front end was "TEMP [@] [DELETE|SETTING]"; the two actions it named
+// are here instead, behind a menu click, which is what "a person is at the
+// machine" means -- so these two ask before they act. The "@" form that answered
+// the confirmation on the caller's behalf retires with the dialect: a script that
+// wants the folder emptied without a question calls fs.temp_clean().
+
+// Report where the folder is, then ask before emptying it. The answer is what
+// CleanTempFolder answered, or S_FALSE when the person said no or nothing is
+// stored to empty.
+HRESULT TempClearFolder(VOID)
 {
 	TCHAR tzTempPath[MAX_STR] = {0};
-	TCHAR tzTempBuf[MAX_PATH] = {0};
-	TCHAR tzBoxText[MAX_STR] = {0};
-	DWORD dwType = REG_SZ;
-	DWORD dwSize = MAX_PATH;
-	BOOL bQuiet;
-	BOOL bDelete;
-	BOOL bSetting;
+	TCHAR tzBoxText[MAX_STR];
+	TCHAR tzTitle[MAX_NAME];
+	TCHAR tzTempFolder[MAX_NAME];
+	TCHAR tzClearTemp[MAX_NAME];
+
+	if (!StoredTempFolder(tzTempPath, _NumOf(tzTempPath)))
+	{
+		TCHAR tzReadEnviFail[MAX_NAME];
+		TCHAR tzError[MAX_NAME];
+
+		LoadString(g_hInst, IDS_ReadEnviFail, tzReadEnviFail, _NumOf(tzReadEnviFail));
+		LoadString(g_hInst, IDS_Error, tzError, _NumOf(tzError));
+		MessageBox(s_hLogo, tzReadEnviFail, tzError, MB_OK | MB_ICONERROR);
+		return S_FALSE;
+	}
+
+	LoadString(g_hInst, IDS_TempFolder, tzTempFolder, _NumOf(tzTempFolder));
+	UStrPrint(tzBoxText, tzTempFolder, tzTempPath);
+	LoadString(g_hInst, IDS_ClearTemp, tzClearTemp, _NumOf(tzClearTemp));
+	// Bounded: the buffer already holds the prompt plus the stored TEMP value,
+	// and that value is expanded into a buffer this size further up, so it can
+	// fill the buffer on its own. Only the tail of the question is lost.
+	UStrCatTo(tzBoxText, tzClearTemp);
+	LoadString(g_hInst, IDS_ClearTempFolder, tzTitle, _NumOf(tzTitle));
+	if (MessageBox(s_hLogo, tzBoxText, tzTitle, MB_YESNO | MB_ICONQUESTION) != IDYES)
+	{
+		return S_FALSE;
+	}
+	return CleanTempFolder();
+}
+
+// Ask for a new folder and point both environment keys at it. The store is what
+// a process started later reads; the process environment is what this one and
+// everything it starts reads now, so both are written.
+HRESULT TempSetFolder(VOID)
+{
+	TCHAR tzTempPath[MAX_STR] = {0};
+	TCHAR tzBoxText[MAX_STR];
+	TCHAR tzTitle[MAX_NAME];
+	TCHAR tzTempFolder[MAX_NAME];
+	TCHAR tzReSet[MAX_NAME];
+	TCHAR tzNewTempFolder[MAX_NAME];
+	TCHAR tzNewPath[MAX_STR];
+	PTSTR ptzChosen;
 	HRESULT hResult = S_OK;
 
-	ptzCmd = UStrTrim(ptzCmd);
-	bQuiet = (*ptzCmd == '@');
-	if (bQuiet)
-	{
-		ptzCmd++;
-	}
-
-	// The option is checked before anything else, because a TEMP without one is
-	// not this command at all: the text form answers E_INVALIDARG rather than
-	// guessing. DELETE wins over SETTING, which is the order these two were
-	// always read in.
-	bDelete = (StrStrI(ptzCmd, TEXT("DELETE")) != NULL);
-	bSetting = !bDelete && (StrStrI(ptzCmd, TEXT("SETTING")) != NULL);
-	if (!bDelete && !bSetting)
-	{
-		return E_INVALIDARG;
-	}
-
-	if (SHGetValue(HKEY_CURRENT_USER, Text_Environment, TEXT("TEMP"), &dwType, &tzTempBuf[0], &dwSize) != ERROR_SUCCESS)
-	{
-		if (SHGetValue(HKEY_CURRENT_USER, Text_Environment, TEXT("TMP"), &dwType, &tzTempBuf[0], &dwSize) != ERROR_SUCCESS)
-		{
-			if (!bQuiet)
-			{
-				TCHAR ReadEnviFail[MAX_NAME];
-				TCHAR pError[MAX_NAME];
-
-				LoadString(g_hInst, IDS_ReadEnviFail, ReadEnviFail, MAX_NAME);
-				LoadString(g_hInst, IDS_Error, pError, MAX_NAME);
-				MessageBox(s_hLogo, ReadEnviFail, pError, MD5Str_Len);
-			}
-			return S_FALSE;
-		}
-	}
-
-	ExpandEnvironmentStrings(tzTempBuf, tzTempPath, MAX_STR);
-	if (UDirExist(tzTempPath))
+	// The question carries where the folder is now, which is the one piece of
+	// context that makes "change it" a question the person can answer.
+	tzBoxText[0] = 0;
+	if (StoredTempFolder(tzTempPath, _NumOf(tzTempPath)))
 	{
 		pzInitDirName = tzTempPath;
+		LoadString(g_hInst, IDS_TempFolder, tzTempFolder, _NumOf(tzTempFolder));
+		UStrPrint(tzBoxText, tzTempFolder, tzTempPath);
 	}
-
-	// Both branches below append their own question to this.
+	LoadString(g_hInst, IDS_ReSetTempFolder, tzReSet, _NumOf(tzReSet));
+	UStrCatTo(tzBoxText, tzReSet);
+	LoadString(g_hInst, IDS_SetTempFolder, tzTitle, _NumOf(tzTitle));
+	if (MessageBox(s_hLogo, tzReSet, tzTitle, MB_YESNO | MB_ICONQUESTION) != IDYES)
 	{
-		TCHAR TempFolder[MAX_NAME];
-
-		LoadString(g_hInst, IDS_TempFolder, TempFolder, MAX_NAME);
-		UStrPrint(tzBoxText, TempFolder, tzTempPath);
+		return S_FALSE;
 	}
 
-	if (bDelete)
+	LoadString(g_hInst, IDS_NewTempFolder, tzNewTempFolder, _NumOf(tzNewTempFolder));
+	ptzChosen = ShellBrowseFolder(tzTempPath, TRUE, tzNewTempFolder);
+	if (!ptzChosen)
 	{
-		TCHAR ClearTemp[MAX_NAME];
-		TCHAR ClearTempFolder[MAX_NAME];
-
-		LoadString(g_hInst, IDS_ClearTemp, ClearTemp, MAX_NAME);
-		LoadString(g_hInst, IDS_ClearTempFolder, ClearTempFolder, MAX_NAME);
-		UStrCat(tzBoxText, ClearTemp);
-		if (bQuiet || (MessageBox(s_hLogo, tzBoxText, ClearTempFolder, 36) == 6))
-		{
-			hResult = CleanTempFolder();
-		}
+		return S_FALSE;     // nothing picked: nothing to change
 	}
-	else
+	// The picker can answer with a file; the folder it sits in is the answer.
+	if (!UDirExist(ptzChosen))
 	{
-		TCHAR ReSetTempFolder[MAX_NAME];
-		TCHAR SetTempFolder[MAX_NAME];
-
-		LoadString(g_hInst, IDS_ReSetTempFolder, ReSetTempFolder, MAX_NAME);
-		LoadString(g_hInst, IDS_SetTempFolder, SetTempFolder, MAX_NAME);
-		UStrCat(tzBoxText, ReSetTempFolder);
-		if (MessageBox(s_hLogo, tzBoxText, SetTempFolder, 36) == 6)
-		{
-			TCHAR NewTempFolder[MAX_NAME];
-			PTSTR pzNewPtah;
-
-			LoadString(g_hInst, IDS_NewTempFolder, NewTempFolder, MAX_NAME);
-			pzNewPtah = ShellBrowseFolder(tzTempPath, TRUE, NewTempFolder);
-			if (pzNewPtah)
-			{
-				if (!UDirExist(pzNewPtah))
-				{
-					UDirSplitPath(pzNewPtah);
-				}
-				if (UDirExist(pzNewPtah))
-				{
-					// MAX_STR, not MAX_PATH: the line is three names and two
-					// separators joined together, and the pieces are already
-					// path-sized.
-					TCHAR pzNewTempPath[MAX_STR];
-
-					UStrPrint(pzNewTempPath, TEXT("%s\\%s\\Temp=%s"), hKCU, Text_Environment, pzNewPtah);
-					Regi(g_ctx, pzNewTempPath);
-					UStrPrint(pzNewTempPath, TEXT("%s\\%s\\Tmp=%s"), hKCU, Text_Environment, pzNewPtah);
-					Regi(g_ctx, pzNewTempPath);
-					UStrPrint(pzNewTempPath, TEXT("TEMP=%s"), pzNewPtah);
-					hResult = SetEnvironment(pzNewTempPath, TRUE, FALSE);
-					UStrPrint(pzNewTempPath, TEXT("TMP=%s"), pzNewPtah);
-					hResult = SetEnvironment(pzNewTempPath, TRUE, FALSE) + hResult;
-					hResult = SetEnvironment(TEXT(""), FALSE, FALSE) + hResult;
-				}
-			}
-		}
+		UDirSplitPath(ptzChosen);
+	}
+	if (!UDirExist(ptzChosen))
+	{
+		return S_FALSE;
 	}
 
+	// bSystem writes the stored value for this user and for the machine, which is
+	// what a process started later reads; the process environment is set here.
+	UStrPrint(tzNewPath, TEXT("TEMP=%s"), ptzChosen);
+	hResult = SetEnvironment(tzNewPath, TRUE, FALSE) + hResult;
+	UStrPrint(tzNewPath, TEXT("TMP=%s"), ptzChosen);
+	hResult = SetEnvironment(tzNewPath, TRUE, FALSE) + hResult;
 	return hResult;
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -495,9 +426,9 @@ HRESULT Temp(CoreContext& ctx, PTSTR ptzCmd)
 //
 // WIMGAPI, sitting on the mount filter driver, takes either name for the same
 // unmount call, so coming down is one call here too. What differs between the
-// halves is the answer, and that is the compatible shape rather than a choice:
+// halves is the answer, and that is the reference's shape rather than a choice:
 // going up says yes or no, coming down reports what the library complained
-// about.
+// about. Case 055 pins both halves.
 /////////////////////////////////////////////////////////////////////////////
 typedef BOOL (WINAPI* PWIMMountImage)(PTSTR pzMountPath,PTSTR pzWimFileName,DWORD dwImageIndex,PTSTR pzTempPath);
 typedef BOOL (WINAPI* PWIMUnMountImage)(PTSTR pzMountPath,PTSTR pzWimFileName,DWORD dwImageIndex,BOOL bCommitChanges);
@@ -507,9 +438,20 @@ typedef BOOL (WINAPI* PWIMUnMountImage)(PTSTR pzMountPath,PTSTR pzWimFileName,DW
 // library is: without the driver running, nothing the library does can work.
 static HMODULE LoadWimApi(VOID)
 {
-	HMODULE hLib = LoadLibrary(TEXT("WIMGAPI.DLL"));
+	TCHAR tzPath[MAX_PATH];
+	HMODULE hLib;
 
-	Serv(g_ctx, WimFltrService);
+	// WIMGAPI.DLL is named bare, so it is resolved to the system directory the
+	// same way NativeCall resolves a bare name -- LoadLibrary alone starts with
+	// the current directory, which for a boot script is the media it was read
+	// from (audit F-05, the half that named this call site).
+	if (!SystemLibraryPath(TEXT("WIMGAPI.DLL"), tzPath, _NumOf(tzPath)))
+	{
+		return NULL;
+	}
+	hLib = LoadLibraryEx(tzPath, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+
+	SetServiceState(WimFltrService, FALSE, FALSE);
 	return hLib;
 }
 
@@ -534,8 +476,13 @@ static BOOL WimMount(PTSTR ptzWimFile, PTSTR ptzMountPath, INT iIndex, PTSTR ptz
 }
 
 // Take it down. ptzImage is the image's file name or its mount folder - the
-// library accepts either, and the front end only decides which string it has.
-static HRESULT WimUnmount(PTSTR ptzImage)
+// library accepts either, and the caller only decides which string it has.
+//
+// bCommit says whether the changes written into the mounted image are kept. The
+// text dialect had no way to ask (its unmount always discarded), which is part
+// of why mounting and unmounting are two verbs here rather than one that decides
+// by which field the caller left out.
+static HRESULT WimUnmount(PTSTR ptzImage, BOOL bCommit)
 {
 	HMODULE hLib = LoadWimApi();
 	PWIMUnMountImage pUnmount;
@@ -546,16 +493,17 @@ static HRESULT WimUnmount(PTSTR ptzImage)
 		pUnmount = (PWIMUnMountImage) GetProcAddress(hLib, "WIMUnmountImage");
 		if (pUnmount)
 		{
-			if (pUnmount(ptzImage, NULL, 0, FALSE))
+			if (pUnmount(ptzImage, NULL, 0, bCommit))
 			{
 				hResult = S_OK;
 			}
 			else
 			{
-				// E_INVALIDARG, for every shape that does not take. It is not
-				// the library's own error being passed along: the library says
-				// ERROR_BAD_FORMAT here while the text form says
-				// ERROR_INVALID_PARAMETER.
+				// E_INVALIDARG, for every shape that does not take - the
+				// reference's answer on this half (case 055 pins four of them).
+				// It is not the library's own error being passed along: that
+				// was tried, and the library says ERROR_BAD_FORMAT here while
+				// the reference says ERROR_INVALID_PARAMETER.
 				hResult = E_INVALIDARG;
 			}
 		}
@@ -577,15 +525,26 @@ HRESULT MountWimImage(PCTSTR ptzImage, PCTSTR ptzMountPath, INT iIndex, PCTSTR p
 		{
 			return E_INVALIDARG;
 		}
-		return WimUnmount((PTSTR) ptzMountPath);
+		return WimUnmount((PTSTR) ptzMountPath, FALSE);
 	}
 	if (ptzMountPath == NULL)
 	{
 		// No comma at all: the line names an image that is already up.
-		return WimUnmount((PTSTR) ptzImage);
+		return WimUnmount((PTSTR) ptzImage, FALSE);
 	}
 	return WimMount((PTSTR) ptzImage, (PTSTR) ptzMountPath, iIndex, (PTSTR) ptzTempDir)
 		? S_OK : S_FALSE;
+}
+
+// The unmount capability, named for what it does. ptzName is either the image
+// file or the folder it was mounted at; the library takes both.
+HRESULT UnmountWimImage(PCTSTR ptzName, BOOL bCommit)
+{
+	if ((ptzName == NULL) || (ptzName[0] == 0))
+	{
+		return E_INVALIDARG;
+	}
+	return WimUnmount((PTSTR) ptzName, bCommit);
 }
 
 // MOUN <wim>,<mount dir>[,<index>[,<scratch dir>]]
@@ -593,42 +552,9 @@ HRESULT MountWimImage(PCTSTR ptzImage, PCTSTR ptzMountPath, INT iIndex, PCTSTR p
 // The fields are separated in place, so the command text has to be writable.
 // The scratch folder is the one field with a rule of its own: it is dropped
 // unless it names something that exists, because the library wants a folder it
-// can put its files in and the field may be left empty.
-HRESULT Moun(CoreContext& ctx, PTSTR ptzCmd)
-{
-	INT iIndex = 1;
-	PTSTR ptzScratch = NULL;
-	PTSTR ptzImage = ptzCmd;
-	PTSTR ptzMountPath = UStrChr(ptzImage, ',');
-
-	if (ptzMountPath)
-	{
-		PTSTR ptzIndex;
-
-		*ptzMountPath++ = 0;
-		ptzIndex = UStrChr(ptzMountPath, ',');
-		if (ptzIndex)
-		{
-			PTSTR ptzRest;
-
-			*ptzIndex++ = 0;
-			iIndex = UStrToInt(ptzIndex);
-			ptzRest = UStrChr(ptzIndex, ',');
-			if (ptzRest)
-			{
-				*ptzRest++ = 0;
-				if (UFileExist(ptzRest))
-				{
-					ptzScratch = ptzRest;
-				}
-			}
-		}
-	}
-	ptzImage = UStrTrim(ptzImage);
-	ptzMountPath = UStrTrim(ptzMountPath);
-	ptzScratch = UStrTrim(ptzScratch);
-	return MountWimImage(ptzImage, ptzMountPath, iIndex, ptzScratch);
-}
+// can put its files in and the text form lets the author leave the field empty.
+// The reference wrote that rule as a pointer multiplied by the answer of a file
+// test, which stops working once a pointer no longer fits in 32 bits.
 /////////////////////////////////////////////////////////////////////////////
 
 
@@ -675,6 +601,21 @@ static TCHAR NextFreeLetter(TCHAR cFrom)
 {
 	DWORD dwLogical = GetLogicalDrives();
 
+	// The shift below is (c - 'A'), so the starting point has to be one of the
+	// twenty-six. A caller that hands in anything else -- a lower-case letter, a
+	// digit, a character from another alphabet -- gets the default instead of a
+	// shift the hardware does not define. The verb refuses such a value before
+	// this runs; this is the second line of defence, because the first one used
+	// to live in a text command that is gone.
+	if ((cFrom >= 'a') && (cFrom <= 'z'))
+	{
+		cFrom = (TCHAR) (cFrom - 'a' + 'A');
+	}
+	if ((cFrom < 'A') || (cFrom > 'Z'))
+	{
+		cFrom = 'C';
+	}
+
 	for (TCHAR c = cFrom; c <= 'Z'; c++)
 	{
 		if ((c == 'A') || (c == 'B'))
@@ -689,11 +630,65 @@ static TCHAR NextFreeLetter(TCHAR cFrom)
 	return 0;
 }
 
+// Is this volume one of the partitions the machine keeps for itself -- the EFI
+// system partition, the MSR, or a recovery partition?
+//
+// A letter on one of those is worse than useless: it shows up as a drive that
+// opens to an error, and every tool that walks the letters starts poking at the
+// firmware's own files. The reference hands them out anyway, which is what
+// D-06 is about; the verbs that letter volumes skip them by default, and
+// `disk.assign(id, letter)` is still there for somebody who means it.
+static BOOL IsFirmwarePartition(PCTSTR ptzVolume)
+{
+	TCHAR tzOpen[MAX_PATH];
+	size_t len;
+	HANDLE h;
+	PARTITION_INFORMATION_EX info;
+	DWORD dwBytes = 0;
+	BOOL bResult = FALSE;
+
+	// CreateFile wants the volume name without its trailing backslash.
+	if (!UStrCopyTo(tzOpen, ptzVolume))
+	{
+		return FALSE;
+	}
+	len = UStrLen(tzOpen);
+	while ((len > 0) && (tzOpen[len - 1] == '\\'))
+	{
+		tzOpen[--len] = 0;
+	}
+	h = CreateFile(tzOpen, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+	{
+		return FALSE;
+	}
+	if (DeviceIoControl(h, IOCTL_DISK_GET_PARTITION_INFO_EX, NULL, 0,
+			&info, sizeof(info), &dwBytes, NULL))
+	{
+		if (info.PartitionStyle == PARTITION_STYLE_GPT)
+		{
+			static const GUID c_esp = { 0xc12a7328, 0xf81f, 0x11d2, { 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b } };
+			static const GUID c_msr = { 0xe3c9e316, 0x0b5c, 0x4db8, { 0x81, 0x7d, 0xf9, 0x2d, 0xf0, 0x02, 0x15, 0xae } };
+			static const GUID c_recovery = { 0xde94bba4, 0x06d1, 0x4d40, { 0xa1, 0x6a, 0xbf, 0xd5, 0x01, 0x79, 0xd6, 0xac } };
+
+			bResult = (memcmp(&info.Gpt.PartitionType, &c_esp, sizeof(GUID)) == 0) ||
+				(memcmp(&info.Gpt.PartitionType, &c_msr, sizeof(GUID)) == 0) ||
+				(memcmp(&info.Gpt.PartitionType, &c_recovery, sizeof(GUID)) == 0);
+		}
+		else if (info.PartitionStyle == PARTITION_STYLE_MBR)
+		{
+			// 0xEF is the EFI system partition in an MBR table, 0x27 recovery.
+			bResult = (info.Mbr.PartitionType == 0xEF) || (info.Mbr.PartitionType == 0x27);
+		}
+	}
+	CloseHandle(h);
+	return bResult;
+}
+
 // Give a drive letter to every volume that has none. A volume with no file
 // system is skipped: a letter on it would be a drive that cannot be opened.
 // Returns how many were mounted, or -1 when the volume list itself failed.
-// The volume-lettering capability. Disk() below is the text front end,
-// and so is the SHOW path that assigns a letter to one named volume.
+// The volume-lettering capability.
 //
 // Every volume Windows knows about but has no letter for gets the first free
 // one at or after cFrom. The return is the number that were lettered, or -1
@@ -719,6 +714,10 @@ INT MountUnmountedVolumes(TCHAR cFrom)
 		{
 			continue;      // already has one - "-1" means do not move it
 		}
+		if (IsFirmwarePartition(tzVolume))
+		{
+			continue;      // the machine's own partitions do not want letters
+		}
 		if (!GetVolumeInformation(tzVolume, tzLabel, _NumOf(tzLabel), NULL, NULL, NULL, NULL, 0))
 		{
 			continue;
@@ -740,6 +739,220 @@ INT MountUnmountedVolumes(TCHAR cFrom)
 }
 
 // The volume GUID name alone: {xxxxxxxx-....}.
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// Defined below, with the bus-type lookup it belongs to; declared here because
+// the volume list wants it and sits above it.
+static STORAGE_BUS_TYPE VolumeBusType(TCHAR cLetter);
+
+// What volumes there are, as data rather than as a walk only this file can take.
+//
+// tzName is the name Windows itself uses for the volume (\\?\Volume{GUID}\).
+// That is the identity to hand back later: a drive letter is a *mount point*, and
+// it is the thing that changes. tzLetter is 0 for a volume that has none.
+struct VolumeInfo
+{
+	TCHAR  tzName[MAX_PATH];
+	TCHAR  tzLetter;
+	TCHAR  tzLabel[MAX_PATH];
+	UINT   uDriveType;			// DRIVE_* of its mount point, or DRIVE_NO_ROOT_DIR
+	UINT   uBusType;			// STORAGE_BUS_TYPE, or BusTypeUnknown
+	UINT64 uTotalMb;
+	UINT64 uFreeMb;
+};
+
+// The volume this process is running from, by its Windows name.
+//
+// One thing must never be renamed: the volume the running system lives on. Every
+// path a PE has is written in terms of that letter -- its system directory, its
+// registry hives, the script that is asking -- so moving it saws off the branch
+// the person is standing on. Refused here rather than left to the caller to
+// remember.
+static BOOL VolumeOfThisProgram(PTSTR ptzName, UINT uLen)
+{
+	TCHAR tzSelf[MAX_PATH];
+	TCHAR tzRoot[MAX_PATH];
+
+	if (!GetModuleFileName(NULL, tzSelf, _NumOf(tzSelf)) ||
+		!GetVolumePathName(tzSelf, tzRoot, _NumOf(tzRoot)))
+	{
+		return FALSE;
+	}
+	return GetVolumeNameForVolumeMountPoint(tzRoot, ptzName, uLen) ? TRUE : FALSE;
+}
+
+// Put one letter on a volume, or take its letters off (cLetter == 0).
+//
+// The volume is named by its own id, not by a letter it happens to have: that is
+// the whole point of pairing this with EnumVolumes. One volume, one letter --
+// the letters it had are removed first, so "give this the U:" leaves nothing
+// behind and `letter` in the volume record keeps meaning one thing.
+//
+// A letter another volume already holds is refused. The old FixUSB.exe took it;
+// a script can see both volumes in disk.volumes() and say what should happen to
+// the other one, which is one line and has no surprise in it.
+HRESULT SetVolumeLetter(PCTSTR ptzVolume, TCHAR cLetter)
+{
+	TCHAR tzTarget[4] = TEXT("X:\\");
+	TCHAR tzVolume[MAX_PATH];
+
+	// The API wants the volume name with its trailing backslash, and so do the
+	// three comparisons below. A caller that typed an id by hand without one used
+	// to slip past "that letter belongs to somebody else" and past the guard on
+	// the running system's own volume -- and then the letters it had would be
+	// removed before SetVolumeMountPoint refused the name, leaving the volume
+	// with no letter at all. Normalize once, here, and everything below sees the
+	// same thing.
+	if (!UStrCopyTo(tzVolume, ptzVolume))
+	{
+		return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+	}
+	if (tzVolume[0] && (tzVolume[UStrLen(tzVolume) - 1] != '\\'))
+	{
+		if (!UStrCatTo(tzVolume, TEXT("\\")))
+		{
+			return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+		}
+	}
+	ptzVolume = tzVolume;
+
+	if ((cLetter >= 'a') && (cLetter <= 'z'))
+	{
+		cLetter = (TCHAR) (cLetter - 'a' + 'A');
+	}
+	if (cLetter && ((cLetter < 'A') || (cLetter > 'Z')))
+	{
+		return E_INVALIDARG;
+	}
+
+	// The volume the running system is on keeps its letter. Asking for the letter
+	// it already has is not a change and goes through; anything else is refused
+	// before a single mount point is touched.
+	{
+		TCHAR tzSelfVolume[MAX_PATH];
+		TCHAR tzCurrent[MAX_PATH];
+
+		if (VolumeOfThisProgram(tzSelfVolume, _NumOf(tzSelfVolume)) &&
+			(UStrCmpI(tzSelfVolume, ptzVolume) == 0))
+		{
+			VolumeLetters(ptzVolume, tzCurrent, _NumOf(tzCurrent));
+			if (!((cLetter && (tzCurrent[0] == cLetter)) ||
+				(!cLetter && (tzCurrent[0] == 0))))
+			{
+				return HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);
+			}
+		}
+	}
+
+	if (cLetter)
+	{
+		TCHAR tzHolder[MAX_PATH];
+
+		tzTarget[0] = cLetter;
+		if (GetVolumeNameForVolumeMountPoint(tzTarget, tzHolder, _NumOf(tzHolder)))
+		{
+			// Something is there. If it is this volume, the request is already
+			// answered; if it is another one, this stops here and nothing has
+			// been touched.
+			if (UStrCmpI(tzHolder, ptzVolume) != 0)
+			{
+				return HRESULT_FROM_WIN32(ERROR_ALREADY_ASSIGNED);
+			}
+		}
+	}
+
+	{
+		TCHAR tzLetters[MAX_PATH];
+
+		VolumeLetters(ptzVolume, tzLetters, _NumOf(tzLetters));
+		for (PTSTR p = tzLetters; p[0] && p[1]; p += 3)		// "C:;"
+		{
+			if ((p[0] == cLetter) && p[2] == ';')
+			{
+				continue;			// the one being asked for stays
+			}
+			{
+				TCHAR tzOld[4] = TEXT("C:\\");
+
+				tzOld[0] = p[0];
+				if (!DeleteVolumeMountPoint(tzOld))
+				{
+					return (HRESULT) GetLastError();
+				}
+			}
+		}
+	}
+
+	if (!cLetter)
+	{
+		return S_OK;				// "no letter" was the whole request
+	}
+	tzTarget[0] = cLetter;
+	return SetVolumeMountPoint(tzTarget, ptzVolume) ? S_OK : (HRESULT) GetLastError();
+}
+
+BOOL EnumVolumes(std::vector<VolumeInfo> &out)
+{
+	TCHAR tzName[MAX_PATH];
+	HANDLE hFind = FindFirstVolume(tzName, _NumOf(tzName));
+
+	if (hFind == INVALID_HANDLE_VALUE)
+	{
+		return FALSE;
+	}
+	do
+	{
+		VolumeInfo info;
+		TCHAR tzLetters[MAX_PATH];
+
+		UMemSet(&info, 0, sizeof(info));
+		UStrCopyN(info.tzName, tzName, _NumOf(info.tzName));
+
+		// "C:;D:;" -> the first letter. A volume can have several; this verb
+		// answers with one, and `letters` was not worth a second field until
+		// somebody needs it.
+		VolumeLetters(tzName, tzLetters, _NumOf(tzLetters));
+		if (tzLetters[0])
+		{
+			info.tzLetter = tzLetters[0];
+		}
+		GetVolumeInformation(tzName, info.tzLabel, _NumOf(info.tzLabel),
+			NULL, NULL, NULL, NULL, 0);
+
+		if (info.tzLetter)
+		{
+			TCHAR tzRoot[4] = TEXT("X:\\");
+			ULONGLONG uFree = 0;
+			ULONGLONG uTotal = 0;
+			ULONGLONG uAvailable = 0;
+
+			tzRoot[0] = info.tzLetter;
+			info.uDriveType = MyGetDriveType(tzRoot);
+			info.uBusType = (UINT) VolumeBusType(info.tzLetter);
+			if (GetDiskFreeSpaceEx(tzRoot, (PULARGE_INTEGER) &uAvailable,
+				(PULARGE_INTEGER) &uTotal, (PULARGE_INTEGER) &uFree))
+			{
+				info.uTotalMb = uTotal / (1024 * 1024);
+				info.uFreeMb = uFree / (1024 * 1024);
+			}
+		}
+		else
+		{
+			// No letter, so there is no mount point to ask about. The volume is
+			// still listed: "there is a volume here that nothing can reach" is a
+			// thing a script may need to see.
+			info.uDriveType = DRIVE_NO_ROOT_DIR;
+			info.uBusType = (UINT) BusTypeUnknown;
+		}
+		out.push_back(info);
+	}
+	while (FindNextVolume(hFind, tzName, _NumOf(tzName)));
+	FindVolumeClose(hFind);
+	return TRUE;
+}
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 static BOOL VolumeGuidName(PCTSTR ptzVolume, PTSTR ptzGuid, UINT uLen)
 {
 	PCTSTR ptzOpen = UStrChr(ptzVolume, '{');
@@ -761,11 +974,17 @@ static BOOL VolumeGuidName(PCTSTR ptzVolume, PTSTR ptzGuid, UINT uLen)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-// --- bus type of the volume behind a drive letter ------------------------------
+// --- the volume the external tool mount hangs off ------------------------------
+//
+// disposition\FixUSB.exe U used to do this job: find the volume that really sits
+// on a USB bus and give it the letter U:. That tool's rule was read back off the
+// binary itself - it enumerates the drive letters, asks each device for its bus
+// type with IOCTL_STORAGE_QUERY_PROPERTY, and finishes with SetVolumeMountPoint.
+// Doing it here keeps the chain in one language, and it is the thing the
+// external tool mount will be built on.
 //
 // Bus type, not DRIVE_REMOVABLE: a SATA disk in a tray is removable too, and a
-// USB stick is not reported as DRIVE_REMOVABLE by every controller. Asking the
-// device itself, with IOCTL_STORAGE_QUERY_PROPERTY, is what tells them apart.
+// USB stick is not reported as DRIVE_REMOVABLE by every controller.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 static STORAGE_BUS_TYPE VolumeBusType(TCHAR cLetter)
 {
@@ -802,12 +1021,13 @@ static STORAGE_BUS_TYPE VolumeBusType(TCHAR cLetter)
 //
 // S_OK when that volume answers to the letter afterwards, including when it
 // already did. The volume keeps any other letters it had: this adds a mount
-// point, it does not move one. Removing the old letter first would be cosmetic,
+// point, it does not move one. That is a deliberate difference from
+// FixUSB.exe, which removes the old letter first - an extra letter is cosmetic,
 // and silently unmounting somebody's volume is not.
 //
 // Only volumes that already have a letter can be found this way, which is the
-// limit of walking the drive letters. Giving a letter to a volume that has none
-// needs a partition walk instead.
+// same limit FixUSB.exe has. Giving a letter to a volume that has none needs a
+// partition walk and belongs with the external tool mount.
 HRESULT AssignLetterToBus(TCHAR cLetter, PTSTR ptzBus)
 {
 	TCHAR tzRoot[4] = TEXT("C:\\");
@@ -872,72 +1092,31 @@ HRESULT AssignLetterToBus(TCHAR cLetter, PTSTR ptzBus)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // SHOW - display partitions
 //
-//   SHOW -1:-1            give a letter to every partition that has none
-//   SHOW -from:<letter>   start the search at that letter
+//   SHOW -1:-1   show every partition
 //
-// The volumes that already have a letter are left alone. Only "-from:" is read
-// out of the arguments; the partition field is accepted and ignored.
+// Implemented: the form the shipped configs use, "-1" for the partition - give
+// a drive letter to each volume that has none, and leave the ones that already
+// have a letter alone. The rest of the documented surface (hd:part,letter,
+// removing a letter, Chinese characters as letters, the wait time, -check) is
+// on the list in docs/COMMAND-BACKLOG.md.
 //////////////////////////////////////////////////////////////////////////////////////////////////
-HRESULT Show(CoreContext& ctx, PTSTR ptzCmd)
-{
-	TCHAR cFrom = 'C';
-	PTSTR p = ptzCmd;
-
-	while ((p = UStrChr(p, '-')) != NULL)
-	{
-		if (!UStrCmpNI(p, TEXT("-from:"), 6))
-		{
-			cFrom = p[6];
-			break;
-		}
-		p++;
-	}
-	MountUnmountedVolumes(cFrom);
-	return S_OK;
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // DISK - disk operations
 //
-//   DISK <variable>,<disk>,<partition>,<function>,[USB letters],[options]
+//   DISK [变量名],[磁盘号],[分区号],功能,[USB盘符表][,选项]
 //   1 = assign a letter, 2 = release, 3 = reassign, 22 = first primary part
 //
-// Functions 1 and 3 are read as "give the partitions that have no letter one".
-// A letter that is already assigned is never touched: moving one out from under
-// a running PE can take the disk it booted from, or its own ramdisk, with it.
-// Any other function answers S_FALSE without acting.
+// Implemented: 1 and 3, which is "give the partitions that have no letter
+// one". NOT implemented: 2, 22, and the half of 3 that reorders letters that
+// are *already* assigned. That half can move a letter out from under a running
+// PE - the disk the PE booted from, or its own ramdisk - so it needs a
+// dedicated test disk and an explicit test before it is worth writing. Until
+// then DISK reports success for 1 and 3 without touching assigned letters,
+// which is the part of its job that is safe to do.
 //////////////////////////////////////////////////////////////////////////////////////////////////
-HRESULT Disk(CoreContext& ctx, PTSTR ptzCmd)
-{
-	INT iFunction = 0;
-	PTSTR p = ptzCmd;
-
-	for (UINT i = 0; (i < 4) && p; i++)
-	{
-		PTSTR q = UStrChr(p, ',');
-		if (q)
-		{
-			*q = 0;
-		}
-		if (i == 3)
-		{
-			iFunction = UStrToInt(UStrTrim(p));
-		}
-		p = q ? (q + 1) : NULL;
-	}
-
-	if ((iFunction == 1) || (iFunction == 3))
-	{
-		if (MountUnmountedVolumes('C') < 0)
-		{
-			return S_FALSE;
-		}
-		return S_OK;
-	}
-	return S_FALSE;
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -952,7 +1131,7 @@ HRESULT Disk(CoreContext& ctx, PTSTR ptzCmd)
 // actually reads to decide "delete, do not move to the bin").
 //////////////////////////////////////////////////////////////////////////////////////////////////
 #define RECY_KEY TEXT("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\BitBucket\\Volume")
-// The recycle-bin capability. Recy() below is the text front end.
+// The recycle-bin capability.
 //
 // The capacity is per volume, keyed by the volume's GUID name under HKCU, and
 // 0 means "do not use the recycle bin at all" (which is what NukeOnDelete is
@@ -963,6 +1142,7 @@ HRESULT SetRecycleCapacity(PCTSTR ptzDrive, DWORD dwCapacity)
 	HANDLE hFind;
 	BOOL bAll = ((ptzDrive == NULL) || (ptzDrive[0] == 0) || (ptzDrive[0] == '*'));
 	UINT uDone = 0;
+	HRESULT hResult = S_OK;
 
 	hFind = FindFirstVolume(tzVolume, _NumOf(tzVolume));
 	if (hFind == INVALID_HANDLE_VALUE)
@@ -992,28 +1172,39 @@ HRESULT SetRecycleCapacity(PCTSTR ptzDrive, DWORD dwCapacity)
 			continue;
 		}
 		UStrPrint(tzKey, TEXT("%s\\%s"), RECY_KEY, tzGuid);
-		SHSetValue(HKEY_CURRENT_USER, tzKey, TEXT("MaxCapacity"), REG_DWORD, &dwCapacity, sizeof(dwCapacity));
-		SHSetValue(HKEY_CURRENT_USER, tzKey, TEXT("NukeOnDelete"), REG_DWORD, &dwNuke, sizeof(dwNuke));
+		{
+			// Both writes are the job. A volume whose setting could not be
+			// written is not a volume this call did anything for: counting it as
+			// done would be the "silent success" the audit's R-05 was about --
+			// and worse here than elsewhere, because the shell goes on reading
+			// whatever was there before and nobody is told.
+			LONG lResult = SHSetValue(HKEY_CURRENT_USER, tzKey, TEXT("MaxCapacity"),
+				REG_DWORD, &dwCapacity, sizeof(dwCapacity));
+
+			if (lResult == ERROR_SUCCESS)
+			{
+				lResult = SHSetValue(HKEY_CURRENT_USER, tzKey, TEXT("NukeOnDelete"),
+					REG_DWORD, &dwNuke, sizeof(dwNuke));
+			}
+			if (lResult != ERROR_SUCCESS)
+			{
+				if (hResult == S_OK)
+				{
+					hResult = (HRESULT) lResult;
+				}
+				continue;
+			}
+		}
 		uDone++;
 	}
 	while (FindNextVolume(hFind, tzVolume, _NumOf(tzVolume)));
 	FindVolumeClose(hFind);
 
+	if (hResult != S_OK)
+	{
+		return hResult;			// a write failed; not "no volume matched"
+	}
 	return uDone ? S_OK : S_FALSE;
 }
 
-HRESULT Recy(CoreContext& ctx, PTSTR ptzCmd)
-{
-	PTSTR ptzDrive = ptzCmd;
-	PTSTR ptzSize = UStrChr(ptzCmd, ',');
-
-	if (!ptzSize)
-	{
-		return E_INVALIDARG;
-	}
-	*ptzSize++ = 0;
-	ptzDrive = UStrTrim(ptzDrive);
-
-	return SetRecycleCapacity(ptzDrive, (DWORD) UStrToInt(UStrTrim(ptzSize)));
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
