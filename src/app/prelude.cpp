@@ -3,7 +3,6 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Header
 #pragma comment(lib, "ShLwAPI.lib")
-#pragma comment(lib, "Version.lib")
 // SetupAPI is what the ramdisk capability talks to the device tree with; it used
 // to be pulled in by the device-install file, which is gone (E10).
 #pragma comment(lib, "SetupAPI.lib")
