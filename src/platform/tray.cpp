@@ -59,10 +59,10 @@ void RegMenuHotk(void)
 //
 // These used to be text in the registry: the chain ran in a child process, so
 // the only thing that could reach the process owning the window was a string,
-// and that string was parsed again on the other side -- which is the injection
-// surface audit S-02 closed on the one hand and the round trip SPEC-11 says
-// disappears on the other. A binding is a closure now, and a closure cannot be
-// written down; the chain runs in this process, so it never has to be.
+// and that string was parsed again on the other side -- an injection surface on
+// one hand and a round trip that could go wrong on the other. A binding is a
+// closure now, and a closure cannot be written down; the chain runs in this
+// process, so it never has to be.
 //
 // `owner` is what keeps the interpreter -- and with it the scope the closure
 // captured -- alive for as long as the binding. Without it the interpreter would
@@ -459,10 +459,9 @@ HWND CreateMainWindow(HINSTANCE hInstance/*, int nCmdShow*/)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // Progress marker for the shell-locking thread. It has no log channel - it runs
-// in the boot driver, before any script opens one - and "did it run, what did it
-// see, did it decide the shell was already there" is the whole reason a shell
-// that dies after the fact never comes back. The harness reads this out of the
-// registry.
+// before any script opens one - and "did it run, what did it see, did it decide
+// the shell was already there" is the whole reason a shell that dies after the
+// fact never comes back. The registry is where it is left.
 static VOID ThreadMark(PCTSTR ptzText)
 {
 	SHSetValue(HKEY_LOCAL_MACHINE, PHOS_STATE, TEXT("MainThread"), REG_SZ,
@@ -588,8 +587,8 @@ bool AddHotkeyBinding(UINT uVk, UINT uMods, int line, const Lang::FuncPtr& fn,
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
-// MD5 of the text, to the clipboard. This one is bucket 1 in the capability audit,
-// which the user put on hold, so the body is left as it is for now.
+// MD5 of the text, to the clipboard. This one was left for later, so the body is
+// as it is.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////
 

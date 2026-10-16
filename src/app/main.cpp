@@ -193,10 +193,10 @@ static String ProgramDirectory(VOID)
 //
 // This is a GUI-subsystem binary: there is no console to print a version or a
 // usage line to, so both are written to a file -- and a file in the current
-// directory is one nobody can find (the audit's R-07). Beside the executable is
-// where init-error.txt has always gone, and it is a place a caller can name
-// without guessing. Empty when the program's own path cannot be read, in which
-// case the bare name is the best that can be done.
+// directory is one nobody can find. Beside the executable is where
+// init-error.txt has always gone, and it is a place a caller can name without
+// guessing. Empty when the program's own path cannot be read, in which case the
+// bare name is the best that can be done.
 static String BesideProgram(PCTSTR ptzName)
 {
 	String dir = ProgramDirectory();
@@ -206,11 +206,11 @@ static String BesideProgram(PCTSTR ptzName)
 
 // Say what went wrong where it will still be there afterwards.
 //
-// A shipped image has no trace channel open this early, and the serial port
-// belongs to the test rig rather than to the person in front of the machine. So
-// the durable copy goes next to the executable -- X:\Windows\System32\init-error.txt
-// in a PE -- which is beside the file CmdLine names, and therefore where someone
-// looking at a boot that stopped will be.
+// A shipped image has no trace channel open this early, and a serial port is not
+// something the person in front of the machine can read. So the durable copy
+// goes next to the executable -- X:\Windows\System32\init-error.txt in a PE --
+// which is beside the file CmdLine names, and therefore where someone looking at
+// a boot that stopped will be.
 VOID ReportStartupError(PCTSTR ptzMessage)
 {
 	if (g_hXLog)
@@ -234,8 +234,8 @@ VOID ReportStartupError(PCTSTR ptzMessage)
 // The default is init.phos next to this executable, which in a PE is
 // X:\Windows\System32\init.phos: a constant, so HKLM\SYSTEM\Setup\CmdLine can
 // read "phos.exe --init" with no path and no %Variable% in it. An explicit
-// path still wins, which is what a caller or the test rig uses to point the
-// entry at a copy somewhere else.
+// path still wins, which is what a caller uses to point the entry at a copy
+// somewhere else.
 //
 // Returns TRUE when the line was an --init invocation. outScript then names the
 // script to run, or is left empty when the file is missing, which the caller

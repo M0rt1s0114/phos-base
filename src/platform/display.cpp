@@ -45,9 +45,9 @@ HRESULT Priv(PCTSTR ptzName)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Put one mode in place. The answer is the DISP_CHANGE_* code the display driver
 // gave back -- 0 when it took, 0xFFFFFFFE (DISP_CHANGE_BADMODE) for a mode no
-// adapter has. The reference hands that code straight back, and case 048 pins
-// it: the same call answers 0 for a mode that exists and 0xFFFFFFFE for one that
-// does not, so it is not a normalised success/failure.
+// adapter has. The reference hands that code straight back: the same call
+// answers 0 for a mode that exists and 0xFFFFFFFE for one that does not, so it
+// is not a normalised success/failure.
 //
 // dmNew is left describing what is on screen now; on a failure the old mode goes
 // back first, so that is what it describes.
@@ -57,8 +57,8 @@ HRESULT SetNewDisplay(DEVMODE &dmOld,DEVMODE &dmNew)
 	// the mode, and a mode the driver refuses must not end up in the registry
 	// to come back at the next boot -- the rollback below only puts the *screen*
 	// back, it does not unsay what was written. CDS_TEST answers with the same
-	// DISP_CHANGE_* codes, so the caller still sees the driver's own answer
-	// (case 048 pins 0xFFFFFFFE for a mode no adapter has).
+	// DISP_CHANGE_* codes, so the caller still sees the driver's own answer --
+	// 0xFFFFFFFE for a mode no adapter has.
 	LONG lResult = ChangeDisplaySettings(&dmNew, CDS_TEST);
 
 	if (lResult == DISP_CHANGE_SUCCESSFUL)
@@ -424,9 +424,8 @@ HRESULT SetServiceState(PCTSTR ptzName, BOOL bStop, BOOL bWait)
 	if (!hService)
 	{
 		// A service that is not there answers 1060, which is what the reference
-		// reports and what case 046 now pins. Answering S_FALSE here was a long
-		// standing difference the case matrix could not see, because no case
-		// touched SERV at all.
+		// reports. Answering S_FALSE here was a long standing difference that
+		// nothing noticed, because nothing exercised SERV at all.
 		HRESULT hr = (HRESULT) GetLastError();
 		CloseServiceHandle(hManager);
 		return hr;
@@ -526,14 +525,14 @@ DWORD FbwfCacheSize(DWORD part_mem, DWORD min_mem, DWORD max_mem,
 		{
 			dwPercent = 50;
 		}
-		dwSize = (DWORD) (dwPercent * GetFreeMemo() / 100); //可用内存的 P%
+		dwSize = (DWORD) (dwPercent * GetFreeMemo() / 100); // P% of the free memory
 	}
 
 	// Both ends are brought inside the range this cache may have, and a pair
 	// that arrived the wrong way round is swapped rather than rejected.
 	dwMin = ClampToRange(dwMin, MIN, MAX);
 	dwMax = ClampToRange(dwMax, MIN, MAX);
-	if (dwMax < dwMin) //交换
+	if (dwMax < dwMin) // swap the two
 	{
 		DWORD dwSwap = dwMin;
 

@@ -245,10 +245,10 @@ namespace Lang
 	namespace
 	{
 		// The names a function body reads that are not its own parameters or
-		// locals: exactly the values a closure captures (SPEC-4). A function
-		// nested inside the body is its own closure, so what it needs that this
-		// body does not bind has to be captured here too, or this closure would
-		// have nothing to hand on.
+		// locals: exactly the values a closure captures. A function nested inside
+		// the body is its own closure, so what it needs that this body does not
+		// bind has to be captured here too, or this closure would have nothing to
+		// hand on.
 		void FreeExpr(const ExprPtr& e, std::set<String>& bound, std::set<String>& free);
 		void FreeStmt(const StmtPtr& s, std::set<String>& bound, std::set<String>& free);
 
@@ -393,9 +393,9 @@ namespace Lang
 			{
 				// The host's own names get a scope of their own, below the
 				// script's. `RegisterBuiltins` supplies `path` and `script`; a
-				// script may still shadow one on purpose -- `let script = ...`
-				// is in the shipped cases -- and the duplicate check below must
-				// not count a shadow as a re-declaration.
+				// script may still shadow one on purpose, with `let script = ...`,
+				// and the duplicate check below must not count a shadow as a
+				// re-declaration.
 				scopes.push_back(std::set<String>());
 				scopes.back().insert(L"path");
 				scopes.back().insert(L"script");
@@ -534,9 +534,9 @@ namespace Lang
 					return true;
 				case ST_ASSIGN:
 					if (!Expr(s->expr)) return false;		// target: name/index, must exist
-					// SPEC-4: a closure captures by value, so it has no cell to
-					// write a captured name back to. Assigning to one is refused
-					// before the program runs, rather than silently lost when the
+					// A closure captures by value, so it has no cell to write a
+					// captured name back to. Assigning to one is refused before
+					// the program runs, rather than silently lost when the
 					// closure is called.
 					if (!fns.empty() && fns.back().closure && (s->expr->kind == EX_VAR)
 						&& !LocalToFunction(s->expr->name))

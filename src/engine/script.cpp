@@ -34,14 +34,13 @@ HRESULT LoadFile(PTSTR ptzPath)
 	//
 	// The path itself is left whole. It goes on to the language as the script's
 	// own path -- what `script.file` answers, and what a crash record names -- and
-	// this used to shorten it to "X:" in place, so both of those were wrong
-	// (docs/FINDINGS-NEW.md N-01).
+	// this used to shorten it to "X:" in place, so both of those were wrong.
 	//
 	// The move is scoped to this call. A script's own directory is what a relative
 	// path inside it should mean; leaving the process there afterwards moves the
 	// *caller's* idea of "here", so the parent's next relative write lands in the
-	// child's folder -- silently, which is what makes it worth a case
-	// (cases-lang/053-script-cwd-scope.phos). The guard restores on every way out.
+	// child's folder -- silently, which is the part that hurts. The guard
+	// restores on every way out.
 	TCHAR tzPrevious[MAX_PATH] = {0};
 	BOOL bRestoreDir = FALSE;
 
@@ -91,7 +90,7 @@ HRESULT LoadFile(PTSTR ptzPath)
 	}
 
 	// A script says what it is on its first line. A file without the marker is
-	// what the text dialect used to be read from -- a PECMD .ini, an old copy of
+	// what the text dialect used to be read from -- an old .ini, an old copy of
 	// the boot chain, a .wcs -- and there is nothing to do with it but say so.
 	//
 	// Refused by name rather than guessed at, and the notice is durable: the
@@ -166,14 +165,13 @@ HRESULT Load(CoreContext& ctx, PTSTR ptzPath)
 		// never told which copy won. That is the shape a planted file exploits:
 		// the boot chain runs with the rights to do anything to the machine, and
 		// a USB stick that happens to be plugged in is enumerated in the same
-		// list as the ramdisk. Audit S-01.
+		// list as the ramdisk.
 		//
 		// Refused rather than narrowed to "the first one found", because
 		// narrowing it would still be a search and the caller still could not see
 		// which copy it got. The replacement is explicit: fs.find_on_drives(rel)
 		// lists where a relative path exists, the script names the one it wants,
-		// and `run` takes one concrete path. See SPEC-10 in
-		// docs/SPEC-DECISIONS.md.
+		// and `run` takes one concrete path.
 		pFileStart = ptzSavedFileStart;
 		return HRESULT_FROM_WIN32(ERROR_BAD_PATHNAME);
 	}
@@ -205,13 +203,12 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 	// environment before the script runs, because every child inherits them and
 	// the shipped boot chain depends on that.
 	//
-	// Measured against the image's own Pecmd.exe: its MAIN hands a script
-	// %Desktop% already expanded. On the official 240512 build the same is true
-	// only because that boot chain runs INIT (which is where this setup lives
-	// here), and the current HTBPE has no INIT anywhere - while Post\Link.ini is
-	// a pile of "LINK %Desktop%\..." lines. Without this they are written into a
-	// directory literally called "%Desktop%", and the command still reports
-	// success.
+	// Measured against the reference: it hands a script %Desktop% already
+	// expanded. On the official 240512 build the same is true only because that
+	// boot chain runs INIT (which is where this setup lives here), and the
+	// current HTBPE has no INIT anywhere - while Post\Link.ini is a pile of
+	// "LINK %Desktop%\..." lines. Without this they are written into a directory
+	// literally called "%Desktop%", and the command still reports success.
 	{
 		TCHAR tzEnv[MAX_NAME];
 		tzEnv[0] = 0;
@@ -221,7 +218,7 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 	// The state key carries a schema number. Nothing reads it yet: it is the
 	// cheap half of letting a later version tell "an image that an older build
 	// wrote this key into" from "the key is there and means what this version
-	// says". See docs/SPEC-DECISIONS.md, SPEC-11.
+	// says".
 	{
 		DWORD dwSchema = 1;
 
@@ -230,9 +227,9 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 	}
 
 	// Switch desktop - and record what happened, because every one of these
-	// three calls can fail and none of them says so. This runs in the boot
-	// driver, before any script has opened a trace channel, so the result goes
-	// to the registry where the test harness picks it up.
+	// three calls can fail and none of them says so. This runs before any script
+	// has opened a trace channel, so the result goes to the registry, which is
+	// the only place left to leave it.
 	{
 		TCHAR tzNames[MAX_NAME];
 		TCHAR tzProbe[MAX_STR];
@@ -264,8 +261,8 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 	// two different processes, which is what makes a hotkey binding impossible to
 	// keep in memory -- the binding is made in the child and fires in the parent,
 	// so the only thing that can cross is text, parked in the registry and parsed
-	// again on the other side. The injection surface S-02 closed and the round
-	// trip SPEC-11 says disappears both live in that gap.
+	// again on the other side. Passing the binding as data, rather than as text
+	// through the registry, is what closes that gap.
 	//
 	// The order is the part that matters: MainThread has to be watching for the
 	// shell *before* the chain starts it, or it sees a shell that is already up
@@ -275,7 +272,7 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 	UThreadClose(UThreadCreate((UPROC) MainThread, NULL));
 
 	// Execute the boot script. Going through Load rather than LoadFile keeps the
-	// refusal to search every drive for a path with no drive on it (audit S-01).
+	// refusal to search every drive for a path with no drive on it.
 	if (ptzCmd[0])
 	{
 		Load(g_ctx, ptzCmd);

@@ -156,9 +156,8 @@ BOOL EjectVolume(WCHAR cDriveLetter, BOOL UsbDriver)
 // A drive that will not let go is retried uRetry times. bAsk is the tray
 // menu's mode and only the tray menu's: a person clicked "eject" and is
 // standing there, so asking "try again?" is a question they can answer. A
-// script gets one try and an answer -- SPEC-3's "unattended never shows a
-// dialog" means a prompt in this loop is a PE that waits for a click nobody
-// will make (the audit's R-06).
+// script gets one try and an answer -- a prompt in this loop would be a PE that
+// waits for a click nobody will make.
 HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB, BOOL bAsk)
 {
 	UINT uType;
@@ -245,7 +244,7 @@ HRESULT EjectDrives(PCTSTR ptzDrive, UINT uRetry, BOOL bCDROM, BOOL bUSB, BOOL b
 //
 // When neither key is set there is nothing to empty, and the cleanup says so
 // with S_FALSE rather than falling back to the Windows directory the way the
-// reference does. Case 050 and known-differences.txt carry that difference.
+// reference does. That difference is deliberate.
 BOOL StoredTempFolder(PTSTR ptzBuf, DWORD cchBuf)
 {
 	TCHAR tzStored[MAX_PATH] = {0};
@@ -296,8 +295,7 @@ HRESULT CleanTempFolder(VOID)
 	// reference answers 0 there, because its own fallback reaches the Windows
 	// directory -- so its "success" means it emptied X:\Windows. That is not
 	// worth matching for a result code: in a PE whose chain has run the keys are
-	// set and both answers are 0. Case 050 records the difference, and it is in
-	// tools/testrig/known-differences.txt.
+	// set and both answers are 0.
 	if (!StoredTempFolder(tzPath, _NumOf(tzPath)))
 	{
 		return S_FALSE;
@@ -428,7 +426,7 @@ HRESULT TempSetFolder(VOID)
 // unmount call, so coming down is one call here too. What differs between the
 // halves is the answer, and that is the reference's shape rather than a choice:
 // going up says yes or no, coming down reports what the library complained
-// about. Case 055 pins both halves.
+// about.
 /////////////////////////////////////////////////////////////////////////////
 typedef BOOL (WINAPI* PWIMMountImage)(PTSTR pzMountPath,PTSTR pzWimFileName,DWORD dwImageIndex,PTSTR pzTempPath);
 typedef BOOL (WINAPI* PWIMUnMountImage)(PTSTR pzMountPath,PTSTR pzWimFileName,DWORD dwImageIndex,BOOL bCommitChanges);
@@ -444,7 +442,7 @@ static HMODULE LoadWimApi(VOID)
 	// WIMGAPI.DLL is named bare, so it is resolved to the system directory the
 	// same way NativeCall resolves a bare name -- LoadLibrary alone starts with
 	// the current directory, which for a boot script is the media it was read
-	// from (audit F-05, the half that named this call site).
+	// from.
 	if (!SystemLibraryPath(TEXT("WIMGAPI.DLL"), tzPath, _NumOf(tzPath)))
 	{
 		return NULL;
@@ -500,10 +498,10 @@ static HRESULT WimUnmount(PTSTR ptzImage, BOOL bCommit)
 			else
 			{
 				// E_INVALIDARG, for every shape that does not take - the
-				// reference's answer on this half (case 055 pins four of them).
-				// It is not the library's own error being passed along: that
-				// was tried, and the library says ERROR_BAD_FORMAT here while
-				// the reference says ERROR_INVALID_PARAMETER.
+				// reference's answer on this half. It is not the library's own
+				// error being passed along: that was tried, and the library says
+				// ERROR_BAD_FORMAT here while the reference says
+				// ERROR_INVALID_PARAMETER.
 				hResult = E_INVALIDARG;
 			}
 		}
@@ -1098,7 +1096,7 @@ HRESULT AssignLetterToBus(TCHAR cLetter, PTSTR ptzBus)
 // a drive letter to each volume that has none, and leave the ones that already
 // have a letter alone. The rest of the documented surface (hd:part,letter,
 // removing a letter, Chinese characters as letters, the wait time, -check) is
-// on the list in docs/COMMAND-BACKLOG.md.
+// not implemented.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1106,7 +1104,7 @@ HRESULT AssignLetterToBus(TCHAR cLetter, PTSTR ptzBus)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // DISK - disk operations
 //
-//   DISK [变量名],[磁盘号],[分区号],功能,[USB盘符表][,选项]
+//   DISK [varname],[disk],[partition],function,[usb-letters][,options]
 //   1 = assign a letter, 2 = release, 3 = reassign, 22 = first primary part
 //
 // Implemented: 1 and 3, which is "give the partitions that have no letter
@@ -1175,9 +1173,9 @@ HRESULT SetRecycleCapacity(PCTSTR ptzDrive, DWORD dwCapacity)
 		{
 			// Both writes are the job. A volume whose setting could not be
 			// written is not a volume this call did anything for: counting it as
-			// done would be the "silent success" the audit's R-05 was about --
-			// and worse here than elsewhere, because the shell goes on reading
-			// whatever was there before and nobody is told.
+			// done would be a silent success -- and worse here than elsewhere,
+			// because the shell goes on reading whatever was there before and
+			// nobody is told.
 			LONG lResult = SHSetValue(HKEY_CURRENT_USER, tzKey, TEXT("MaxCapacity"),
 				REG_DWORD, &dwCapacity, sizeof(dwCapacity));
 

@@ -3,9 +3,9 @@
 //
 // A tree walking evaluator over the parser's output. Values have value
 // semantics implemented with copy-on-write: binding, arguments and capture
-// share a container, and it is cloned only when something writes through it
-// (SPEC-7). Only false and nil are falsy (section 2), and a failing host call
-// raises unless the script wraps it in try (decision 9).
+// share a container, and it is cloned only when something writes through it.
+// Only false and nil are falsy, and a failing host call raises unless the
+// script wraps it in try.
 //
 // There is a step ceiling. It is not a language feature, it is a WinPE
 // seatbelt: "while true { }" in a boot script must not leave the machine
@@ -29,10 +29,10 @@ namespace Lang
 	const int c_valueDepthLimit = 1000;
 
 	// A list or record is shared, not copied, when a value is bound to another
-	// name, passed to a function or captured by a closure (SPEC-7). This is the
-	// write side of that bargain: a container that more than one value refers
-	// to is cloned before it is written through, so the other holders keep the
-	// value they had.
+	// name, passed to a function or captured by a closure. This is the write
+	// side of that bargain: a container that more than one value refers to is
+	// cloned before it is written through, so the other holders keep the value
+	// they had.
 	//
 	// Only the container is cloned and its elements are shared until they too
 	// are written through. That is what keeps the common shape -- hand a big
@@ -231,7 +231,7 @@ namespace Lang
 		}
 
 		// The scope a closure carries: the values its body uses, copied out at
-		// the moment it is created (SPEC-4, capture by value).
+		// the moment it is created, by value.
 		//
 		// Its parent is the module scope, not the scope the closure was written
 		// in. That is what keeps a closure created inside a loop from holding the
@@ -260,7 +260,7 @@ namespace Lang
 			CrashSetLine(line);
 			if (++in.steps > in.stepLimit)
 			{
-				// Not an Error on purpose: SPEC-6 keeps the watchdog out of the
+				// Not an Error on purpose: the watchdog stays out of the
 				// language's `catch`, which only takes Error.
 				throw GuardSignal(0x8000FFFF, L"step limit reached (runaway loop?)", line);
 			}
@@ -314,7 +314,7 @@ namespace Lang
 
 			// Arguments are bound into the callee. A container is shared, and a
 			// write on either side clones it first, so a list passed in cannot
-			// be written through from the other side (SPEC-7).
+			// be written through from the other side.
 			for (size_t i = 0; i < fn->params.size(); i++)
 			{
 				call->vars[fn->params[i]] = args[i];
@@ -379,8 +379,7 @@ namespace Lang
 					break;
 				}
 
-				// Arithmetic. Same types only, which is decision 3 in the language
-				// document: 1 + "1" is an error, not "11".
+				// Arithmetic. Same types only: 1 + "1" is an error, not "11".
 				if (e->op == TK_PLUS && (a.kind == VK_STR) && (b.kind == VK_STR))
 				{
 					r.kind = VK_STR;
@@ -412,12 +411,10 @@ namespace Lang
 				r.kind = VK_INT;
 				switch (e->op)
 				{
-				// These used to wrap, deliberately, and the language reference
-				// said so. SPEC-8 changed the rule: a sum that cannot be
-				// represented stops the script. Silently wrapping is the kind
-				// of wrong answer this language is built to refuse, and it is
-				// also the kind that survives to the end of a boot before
-				// anybody notices.
+				// A sum that cannot be represented stops the script. Silently
+				// wrapping is the kind of wrong answer this language is built to
+				// refuse, and it is also the kind that survives to the end of a
+				// boot before anybody notices.
 				case TK_PLUS:
 					if (((b.i > 0) && (a.i > c_i64Max - b.i)) ||
 						((b.i < 0) && (a.i < c_i64Min - b.i)))
@@ -858,7 +855,7 @@ namespace Lang
 					e.kind = VK_RECORD;
 					e.rec = RecordPtr(new std::vector<std::pair<String, Value> >());
 					{
-						// SPEC-6 fixes the record at {code, message, line, verb}.
+						// The record is fixed at {code, message, line, verb}.
 						//
 						// *code* is an HRESULT. A verb that failed reports the
 						// raw Win32 code, which is a small positive number, so

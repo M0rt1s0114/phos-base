@@ -369,10 +369,9 @@ namespace Lang
 
 		// fail(message, {code}) -- how a script says "stop, and here is why".
 		//
-		// SPEC-6. Without it a script can only wait for a host verb to fail; it
-		// has no way to report a condition it worked out itself, which is what
-		// every test that asserts a value needs. The default code is E_FAIL
-		// rather than zero so a record always carries one.
+		// Without it a script can only wait for a host verb to fail; it has no
+		// way to report a condition it worked out itself. The default code is
+		// E_FAIL rather than zero so a record always carries one.
 		Value HostFail(Interp&, std::vector<Value>& args, int line)
 		{
 			String message = ArgStr(args, 0, line, L"message");
@@ -1191,7 +1190,7 @@ namespace Lang
 		// The one listing both verbs are: the caller says which kind of entry it
 		// wants, and everything else -- the pattern, the sort, the fact that the
 		// result is absolute paths -- is the same. Two verbs rather than one with
-		// a mode switch, because SPEC-2 says a mode switch is its own verb.
+		// a mode switch, because a mode switch is its own verb.
 		Value FsListKind(const std::vector<Value>& args, int line, BOOL bDirs)
 		{
 			String dir = ArgStr(args, 0, line, L"directory");
@@ -1252,8 +1251,8 @@ namespace Lang
 
 		// Every file in a directory that matches a pattern. Directories are not
 		// in here -- that is what fs.list_dirs is for, and this verb's answer has
-		// never had a way to say "a directory was left out" (audit R-05, and the
-		// reason the pair exists rather than one verb with a switch).
+		// never had a way to say "a directory was left out", which is why the
+		// pair exists rather than one verb with a switch.
 		Value HostFsList(Interp&, std::vector<Value>& args, int line)
 		{
 			return FsListKind(args, line, FALSE);
@@ -1553,9 +1552,9 @@ namespace Lang
 			String path = ArgStr(args, 0, line, L"path");
 
 			// A directory that cannot be entered is not an error: the reference
-			// reports success there (case 001 pins it), on the reasoning that
-			// failing a boot script over a folder it cannot enter is worse than
-			// carrying on. The trace says which of the two happened.
+			// reports success there, on the reasoning that failing a boot script
+			// over a folder it cannot enter is worse than carrying on. The trace
+			// says which of the two happened.
 			if (!SetCurrentDirectoryW(path.c_str()))
 			{
 				TraceVerb(String(L"fs.chdir ") + path + L" (not entered)", line, S_OK);
@@ -1713,7 +1712,7 @@ namespace Lang
 					// walk, and nothing missing. Anything else means the walk could
 					// not be made at all, and "every file in that tree took the
 					// change" is then a claim this call cannot support. Same shape
-					// as PathSizeBytes (docs/FINDINGS-NEW.md N-08).
+					// as PathSizeBytes.
 					DWORD dwErr = GetLastError();
 
 					if (dwErr != ERROR_FILE_NOT_FOUND)
@@ -1802,10 +1801,11 @@ namespace Lang
 		// fs.find_on_drives(relative) -- every drive root where that relative
 		// path exists, as a list of full paths.
 		//
-		// This is what replaces the "LOAD \relative" search that audit S-01
-		// removed. Searching and deciding are separate here: this only lists, the
-		// script names the one it wants, and `run` still takes one concrete path
-		// -- so nothing is ever executed from a drive the script did not name.
+		// This is what replaces the "LOAD \relative" search that used to run from
+		// whichever drive answered first. Searching and deciding are separate
+		// here: this only lists, the script names the one it wants, and `run` still
+		// takes one concrete path -- so nothing is ever executed from a drive the
+		// script did not name.
 		Value HostFsFindOnDrives(Interp&, std::vector<Value>& args, int line)
 		{
 			String rel = ArgStr(args, 0, line, L"relative path");
@@ -1900,7 +1900,7 @@ namespace Lang
 		// may be a WIM or an install image, and the whole point of the verb is to
 		// work on one. That is also the difference from the HASH it replaces,
 		// which read the whole thing into memory and answered success even when
-		// the read had failed (audit E-03).
+		// the read had failed.
 		Value HostFsHash(Interp&, std::vector<Value>& args, int line)
 		{
 			String path = ArgStr(args, 0, line, L"path");
@@ -2068,9 +2068,8 @@ namespace Lang
 			HRESULT hr;
 
 			// { system: true } used to become the SHEL "-sys" switch, which the
-			// legacy parser recognises and then skips -- what it should change is
-			// still on the list in docs/COMMAND-BACKLOG.md. It stays in the trace
-			// so the intent is visible, but nothing pretends to act on it.
+			// legacy parser recognises and then skips. It stays in the trace so the
+			// intent is visible, but nothing pretends to act on it.
 			hr = SetSystemShell(path.c_str());
 			if (hr != S_OK)
 			{
@@ -2081,9 +2080,9 @@ namespace Lang
 		}
 
 		// Both of these are WinXShell's, kept because the language has no UI
-		// layer yet (docs/LANGUAGE-CASE-STARTUP.md G2/UI). They disappear when
-		// the ui module lands; until then the boot chain stays single language
-		// and the trail still shows exactly one WinXShell call per action.
+		// layer yet. They disappear when the ui module lands; until then the boot
+		// chain stays single language and the trail still shows exactly one
+		// WinXShell call per action.
 		Value HostUiPinToTaskbar(Interp&, std::vector<Value>& args, int line)
 		{
 			String name = ArgStr(args, 0, line, L"program name");
@@ -2158,7 +2157,7 @@ namespace Lang
 		// parked in the registry and parsed again by whichever process owned the
 		// window -- text out of a script, handed to a parser, on the other side
 		// of a process boundary. That is gone: the chain runs in the process that
-		// owns the window, so the binding stays a value (SPEC-11).
+		// owns the window, so the binding stays a value.
 		//
 		// The interpreter goes with it, because the closure's captured scope has
 		// to outlive the script that made it. Nothing else in this file has to
@@ -2323,8 +2322,8 @@ namespace Lang
 			// is what the shipped Initapp config relies on for FastEx64.dll.
 			//
 			// A library that will not load is not raised: the reference answers
-			// success there (cases 029 and 039 pin both halves), and a boot step
-			// should not stop the chain because an optional DLL is absent.
+			// success there, and a boot step should not stop the chain because an
+			// optional DLL is absent.
 			String dll = ArgStr(args, 0, line, L"library");
 			LONG lResult = 0;
 			HRESULT hr = NativeCall(dll.c_str(), NULL, NULL, 0, &lResult);
@@ -2368,8 +2367,7 @@ namespace Lang
 			// The waiting form takes {timeout} exactly as proc.run does, and
 			// hands drvload's own exit code back: a driver that did not install
 			// is then something the caller can act on, and a drvload that never
-			// returns no longer stops the boot chain for ever (audit R-04, the
-			// row that named this call site).
+			// returns no longer stops the boot chain for ever.
 			SpawnAndTrace(L"drv.load", spec, wait, line,
 				wait ? NULL : &hProcess, wait ? NULL : &dwPid,
 				wait ? ProcTimeout(args, 1) : INFINITE, wait ? &iExit : NULL);
@@ -2403,8 +2401,8 @@ namespace Lang
 
 			// Already running is the state the caller asked for, so it is not an
 			// error here. The reference's SERV reports 1056 in that case and the
-			// legacy command keeps doing exactly that -- case 046 pins the code
-			// path -- but this verb is a postcondition, not a report.
+			// legacy command keeps doing exactly that, but this verb is a
+			// postcondition, not a report.
 			if ((hr != S_OK) && (hr != (HRESULT) ERROR_SERVICE_ALREADY_RUNNING))
 			{
 				throw Error(hr, String(L"svc.start could not start ") + name, line);
@@ -2436,11 +2434,11 @@ namespace Lang
 			HRESULT hr = QueryServiceState(name.c_str(), &sStatus);
 			Value out;
 
-			// "Not installed" is an answer to a query, not a failure of one:
-			// SPEC-3 asks a query that finds nothing to return nil, so a script
-			// can ask whether a service is there without wrapping the question in
-			// try. Every other result still raises -- a service manager that will
-			// not answer is not the same thing as a service that is not there.
+			// "Not installed" is an answer to a query, not a failure of one: a
+			// query that finds nothing returns nil, so a script can ask whether a
+			// service is there without wrapping the question in try. Every other
+			// result still raises -- a service manager that will not answer is not
+			// the same thing as a service that is not there.
 			if (hr == (HRESULT) ERROR_SERVICE_DOES_NOT_EXIST)
 			{
 				TraceVerb(String(L"svc.query ") + name + L" (absent)", line, S_OK);
@@ -2590,10 +2588,10 @@ namespace Lang
 		// The four pure functions the core keeps: len, slice, find, replace.
 		//
 		// Everything else the dialect spelled as a command over strings lives in
-		// the `str` library (SPEC-10). These four stay in the core because they
-		// are the ones every script reaches for, and because a library cannot be
-		// written without them. None of them touches anything, so none of them
-		// traces: the trace channel is for what a script *did*.
+		// the `str` library. These four stay in the core because they are the ones
+		// every script reaches for, and because a library cannot be written
+		// without them. None of them touches anything, so none of them traces:
+		// the trace channel is for what a script *did*.
 
 		// len(x) -- how many there are: characters in a string, elements in a
 		// list, fields in a record. One verb rather than three, because it is the
@@ -2923,7 +2921,7 @@ namespace Lang
 		//
 		// The path is concrete. The command this replaces had a form that walked
 		// every drive looking for a folder under each one's root -- the same shape
-		// audit S-01 removed from LOAD, where a planted directory on a stick gets
+		// that was removed from LOAD, where a planted directory on a stick gets
 		// its fonts registered. A caller that wants to look on several drives asks
 		// fs.find_on_drives and names the one it means.
 		Value HostSysFont(Interp&, std::vector<Value>& args, int line)
@@ -2960,7 +2958,7 @@ namespace Lang
 		// puts in a file name or a log line. Both in one call, because asking for
 		// one and then the other would be two clocks and possibly two seconds.
 		// It replaces DATE. A wall clock is not deterministic, so this is the kind
-		// of call the trace records for replay (LANGUAGE.md section 5).
+		// of call the trace records for replay.
 		Value HostTimeNow(Interp&, std::vector<Value>&, int line)
 		{
 			SYSTEMTIME stLocal;
@@ -3154,9 +3152,9 @@ namespace Lang
 			// a NULL name, not an empty one -- the capability tells them apart on
 			// purpose, because the legacy text form produces both.
 			//
-			// bAsk is FALSE: a script gets an answer, never a question (SPEC-3).
-			// Before this the missing `retry` option meant "ask the operator",
-			// so a headless eject that failed sat on a message box for ever.
+			// bAsk is FALSE: a script gets an answer, never a question. Before
+			// this the missing `retry` option meant "ask the operator", so a
+			// headless eject that failed sat on a message box for ever.
 			hr = EjectDrives((drive.empty() || (drive == L"*")) ? NULL : drive.c_str(),
 				(UINT) retry, bCDROM, bUSB, FALSE);
 			if (hr != S_OK)
@@ -3279,12 +3277,12 @@ namespace Lang
 
 		// disk.volumes() -- every volume Windows knows about, as records.
 		//
-		// This is the first half of SPEC-10's merge: a script asks which volumes
-		// there are and what each one is, then names the one it means by `id`,
-		// which is the name Windows uses (\\?\Volume{GUID}\) and does not change
-		// when a letter does. The other half -- disk.assign(id, letter) -- is not
-		// here yet, because it replaces the thing the boot chain uses to find the
-		// U: drive and there is no USB stick in the test machine to prove it on.
+		// A script asks which volumes there are and what each one is, then names
+		// the one it means by `id`, which is the name Windows uses
+		// (\\?\Volume{GUID}\) and does not change when a letter does. The other
+		// half -- disk.assign(id, letter) -- is not here yet: it replaces the
+		// thing the boot chain uses to find the U: drive, and that has not been
+		// proved against a real USB stick.
 		Value HostDiskVolumes(Interp&, std::vector<Value>&, int line)
 		{
 			std::vector<VolumeInfo> volumes;
@@ -3513,9 +3511,9 @@ namespace Lang
 
 		// run(path, { wait: false }) puts the whole script in its own process, so
 		// proc.await and proc.await_all treat a script exactly like an external
-		// program. That is ruling 20 in docs/LANGUAGE.md: "drop a file in a folder
-		// and let it run beside the others" is the shape this exists for, and it
-		// is why the task gets its own trail instead of sharing the parent's.
+		// program. "Drop a file in a folder and let it run beside the others" is
+		// the shape this exists for, and it is why the task gets its own trail
+		// instead of sharing the parent's.
 		Value RunAsSubprocess(Interp& in, const String& path, int line)
 		{
 			TCHAR tzExe[MAX_PATH];
@@ -3584,9 +3582,9 @@ namespace Lang
 			{
 				throw Error(ERROR_FILE_NOT_FOUND, L"run: no such script: " + path, line);
 			}
-			// SPEC-10: a script on media that can be swapped under us is a script
-			// anyone who can plug a stick in can replace, and this one runs with
-			// the rights to change the machine. The caller has to say it means it.
+			// A script on media that can be swapped under us is a script anyone
+			// who can plug a stick in can replace, and this one runs with the
+			// rights to change the machine. The caller has to say it means it.
 			if (!trusted && IsRemovablePath(path))
 			{
 				throw Error((HRESULT) ERROR_ACCESS_DENIED,
@@ -3769,9 +3767,9 @@ namespace Lang
 	// Outside the anonymous namespace on purpose: tray.cpp declares this one, and
 	// a function with internal linkage cannot be the one that declaration names.
 	//
-	// SPEC-5: a callback gets its own step budget, and an error inside one is
-	// logged and swallowed. Letting it out would unwind through the window's
-	// message loop, and the window would go with it.
+	// A callback gets its own step budget, and an error inside one is logged and
+	// swallowed. Letting it out would unwind through the window's message loop,
+	// and the window would go with it.
 	void RunHotkeyCallback(size_t slot)
 	{
 		std::shared_ptr<Interp> owner;
@@ -3789,7 +3787,7 @@ namespace Lang
 		{
 			return;
 		}
-		owner->steps = 0;		// a fresh budget, as SPEC-5 asks
+		owner->steps = 0;		// a fresh budget for this callback
 		try
 		{
 			std::vector<Value> none;

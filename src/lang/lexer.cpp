@@ -1,11 +1,11 @@
 ﻿//////////////////////////////////////////////////////////////////////////////////////////////////
 // Phosphor lexer.
 //
-// String literals do not process escapes, which is decision 16 in
-// docs/LANGUAGE.md: "X:\Windows\System32" is what it looks like. The rare case
-// that needs a newline or a real quote writes esc"...". Both forms still take
-// ${expr} interpolation, and the interpolation text is kept verbatim here and
-// taken apart by the parser, because the expression inside it is a full one.
+// String literals do not process escapes: "X:\Windows\System32" is what it looks
+// like. The rare case that needs a newline or a real quote writes esc"...".
+// Both forms still take ${expr} interpolation, and the interpolation text is
+// kept verbatim here and taken apart by the parser, because the expression
+// inside it is a full one.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 namespace Lang
 {

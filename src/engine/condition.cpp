@@ -89,11 +89,12 @@ static HANDLE XLogOpen(PTSTR ptzTarget, BOOL bStream)
 
 // A device target keeps its handle for the life of the log. Opening and closing
 // a serial port once per trace line makes the host end of the line see a new
-// "session" every time, and VMware's serial-to-file capture drops the head of
-// the output when that happens - a long boot chain then arrives with its first
-// half missing, which is the worst possible failure mode for a debug channel.
-// File targets still open and close per write, because the harness reads them
-// while the boot is still running.
+// "session" every time, and a host that captures the port to a file drops the
+// head of the output when that happens - a long boot chain then arrives with its
+// first half missing, which is the worst possible failure mode for a debug
+// channel.
+// File targets still open and close per write, so that a reader on the other
+// side sees each line as it is written.
 static HANDLE XLogDevice = INVALID_HANDLE_VALUE;
 
 // When the channel was opened, for the per-line elapsed time. Zero until then.
@@ -174,7 +175,7 @@ VOID XLogStartFromEnv(VOID)
 // everything the chain logs has to fit in that block -- and once a task's own
 // trail started being copied back into the parent's log, it did not. The
 // overflow landed during the final flush, which is why the symptom was a boot
-// that stopped dead with an empty serial log and no harness output at all.
+// that stopped dead with an empty serial log and nothing else to go on.
 VOID LogAppend(PCTSTR ptzText)
 {
 	UINT uHave = LogFileData ? UStrLen(LogFileData) : 0;
@@ -239,12 +240,11 @@ VOID SetLogs(PTSTR tzCmdStr,HRESULT eResult)
 	TCHAR tzLine[MAX_STR];
 	// The result is printed unsigned. The reference does that, and it matters
 	// for any HRESULT with the top bit set: E_INVALIDARG comes out as
-	// 2147942487 there, not as a negative number (case 005 shows both forms
-	// side by side).
+	// 2147942487, not as a negative number.
 	// The elapsed time rides at the end of the message field on purpose: that
-	// field is localised and the differential differ ignores it, so a timing
-	// column cannot turn a green comparison red. It is what makes "would
-	// concurrency help here" an answerable question instead of an opinion.
+	// field is localised and nothing compares it, so a timing column cannot turn
+	// a green comparison red. It is what makes "would concurrency help here" an
+	// answerable question instead of an opinion.
 	UStrPrint(tzLine, TEXT("%u\t[%s]\t<%u>\t:%s [t=%u]\n"),
 		g_ctx.uLineNo, tzCmdStr, (UINT) hResult, tzMsg,
 		(UINT) (GetTickCount() - g_uXLogStart));

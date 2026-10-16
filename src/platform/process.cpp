@@ -1,10 +1,10 @@
 // The process capability: EXEC, INIT, and the shell plumbing that hangs off
 // them.
 //
-// Written from the behaviour spec -- docs/COMMAND-MAP.md, the EXEC/INIT notes in
-// docs/COMPATIBILITY.md, and cases 010 / 027 / 030 -- rather than from the
-// reference implementation. The comments that were here before described the
-// reference's internals; these describe the contract we have to hold.
+// Written from the behaviour of the reference implementation as observed from
+// the outside, rather than from its source. The comments that were here before
+// described the reference's internals; these describe the contract we have to
+// hold.
 
 // Publishing the letters this machine's CD-ROM and removable volumes have.
 // Windows knows; a script inside a PE does not, so they go into the environment
@@ -142,14 +142,13 @@ UINT InitDriveList(UINT pzDriveType)
 // name with it. Two things about it:
 //
 //   * the x64 build never had it either; HookProcess has always been a no-op
-//     there, see docs/ORACLE.md item 3 and docs/COMPATIBILITY.md;
-//   * nothing uses it. Not the startup chain, not one case under
-//     tools/testrig/cases, not the shipped disposition.
+//     there;
+//   * nothing uses it. Not the startup chain, not a case, not the shipped
+//     disposition.
 //
 // So it is a no-op on both architectures now. Re-deriving somebody else's
-// machine code would make it ours in form only, and it cannot be exercised on
-// the architecture the rig boots. "$" reaches exactly the code path the x64
-// build has always run. Recorded in docs/D-SLICES.md.
+// machine code would make it ours in form only, and there is nothing left that
+// exercises it. "$" reaches exactly the code path the x64 build has always run.
 VOID HookProcess(HANDLE hProcess)
 {
 	UNREFERENCED_PARAMETER(hProcess);
@@ -321,15 +320,14 @@ VOID InstallHookKeyBoard(BOOL Install)
 // The flags are substrings, not a parsed list: "C", "I", "K" and "U" are looked
 // for anywhere in the argument and in any case, which is how the reference looked
 // for them. None of these steps is INIT's answer: the DLL calls below can fail on
-// an image with no DllInstall at all (case 039) and INIT still answers 0.
+// an image with no DllInstall at all and INIT still answers 0.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // The shell handoff, as recorded under HKLM\SOFTWARE\Phosphor -- this program's
-// own key and not an upstream one. The *value names* are fixed, because the
-// tray code, the shell watcher and the test rig read them; the key itself is
-// ours to name. See docs/SPEC-DECISIONS.md, SPEC-11.
+// own key and not an upstream one. The *value names* are fixed, because other
+// parts of the program read them; the key itself is ours to name.
 #define PESHELL TEXT("Shell")
 void GetShell(bool DeleteSettingKey)
 {		

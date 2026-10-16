@@ -165,9 +165,9 @@ HRESULT RegQueryValueRaw(HKEY hRoot, PCTSTR ptzSubKey, PCTSTR ptzName,
 }
 
 // Loading an offline hive and taking it back down. The mount name is a bare
-// key name under HKLM. The legacy dialect has no command for this at all --
-// which is why the test rig used to shell out to reg.exe to rewrite a boot
-// entry, and why this is a new capability rather than a moved one.
+// key name under HKLM. The legacy dialect has no command for this at all, which
+// is why rewriting a boot entry used to mean shelling out to reg.exe, and why
+// this is a new capability rather than a moved one.
 //
 // It needs SeBackup/SeRestore, so it works as SYSTEM in the PE and not as an
 // ordinary user.

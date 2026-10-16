@@ -4,8 +4,8 @@
 // screen still shows whatever was drawn last, and nothing has been written
 // anywhere. The image runs from a ramdisk, so a file next to the executable
 // would not survive the reboot that follows -- which is why this writes to the
-// debug channel that PHOS_DEBUG_LOG already opened (COM1 under the test rig)
-// and not to a file.
+// debug channel PHOS_DEBUG_LOG already opened, normally a serial port, and not
+// to a file.
 //
 // Everything here is written for a process that has already lost control:
 //

@@ -1,22 +1,20 @@
 ﻿//////////////////////////////////////////////////////////////////////////////////////////////////
 // Phosphor - the structured script front end.
 //
-// This is the first executable slice of docs/LANGUAGE.md. It is a tree walking
-// interpreter, deliberately small: it exists so the real HTBPE boot chain can
-// be written in one language instead of PECMD dialect + cmd + Lua, not so that
-// every design decision in the language document is finished.
+// A tree walking interpreter, deliberately small: it exists so the real HTBPE
+// boot chain can be written in one language instead of a command dialect, cmd
+// and Lua, not so that every design decision in the language is finished.
 //
 // Two things are on purpose:
 //   * values have value semantics, implemented with copy-on-write: a container
 //     is shared when it is bound or passed, and cloned before it is written
 //     through, so a write through one name is never visible through another
-//     (SPEC-7)
 //   * a function value captures the values its body uses and nothing else, so a
-//     closure made in a loop does not keep that loop's frame alive (SPEC-4).
+//     closure made in a loop does not keep that loop's frame alive.
 //     A top level function is not a closure: it is a module table entry, looked
 //     up by name, which is how two of them can call each other
 //   * a host call that fails stops the script unless it is written inside a
-//     try block (decision 9)
+//     try block
 //
 // The host table at the bottom of host.cpp is the whole surface: every verb is a
 // function that calls a capability directly. It used to be a bridge that rebuilt
@@ -139,7 +137,7 @@ namespace Lang
 		// The verb that was running when this was raised, when there was one.
 		// Stamped on the way out of the host call rather than read when the
 		// catch block runs: by then the call has returned and the interpreter is
-		// no longer inside it. SPEC-6 puts this in the record a script sees.
+		// no longer inside it. It goes into the record a script sees.
 		String       verb;
 		Error(long long c, const String& m, int l) : code(c), message(m), line(l) {}
 	};
@@ -147,12 +145,12 @@ namespace Lang
 	struct BreakSignal {};
 	struct ContinueSignal {};
 
-	// A watchdog stop: the step budget. SPEC-6 says the budget cannot be taken
-	// by `try/catch`, and the reason is mechanical -- the budget is spent for
-	// the rest of the entry, so a handler would raise it again on its first
-	// statement and the report would name the handler's line instead of the
-	// one that ran away. The call-depth ceiling is deliberately NOT in here:
-	// the stack unwinds, so a handler can recover from it, and case 025 does.
+	// A watchdog stop: the step budget. The budget cannot be taken by
+	// `try/catch`, and the reason is mechanical -- the budget is spent for the
+	// rest of the entry, so a handler would raise it again on its first
+	// statement and the report would name the handler's line instead of the one
+	// that ran away. The call-depth ceiling is deliberately NOT in here: the
+	// stack unwinds, so a handler can recover from it.
 	struct GuardSignal
 	{
 		long long code;
@@ -242,8 +240,8 @@ namespace Lang
 		int                  depthLimit;
 		BOOL                 dryRun;
 		// The verb being executed, for the error record a catch block receives
-		// (SPEC-6: code, message, line, verb) and for the crash breadcrumb. Set
-		// around every host call, so it is the innermost one that failed.
+		// (code, message, line, verb) and for the crash breadcrumb. Set around
+		// every host call, so it is the innermost one that failed.
 		String               verb;
 		String               scriptDir;		// directory of the running script, no trailing slash
 		String               scriptPath;
@@ -261,7 +259,7 @@ namespace Lang
 		// Trail file per running task, keyed the same way. A task started with
 		// run(path, { wait: false }) writes its own log, so two tasks cannot
 		// interleave into one stream; the parent copies each one back into its
-		// own channel when the task is awaited (docs/LANGUAGE.md ruling 21).
+		// own channel when the task is awaited.
 		std::map<long long, String> procLogs;
 
 		Interp() : steps(0), stepLimit(20000000ULL), depth(0), depthLimit(200), dryRun(FALSE) {}

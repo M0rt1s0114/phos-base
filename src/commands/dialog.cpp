@@ -101,8 +101,8 @@ PTSTR ShellBrowseFolder(PTSTR InitPath,BOOL IncludeFiles,PTSTR ptzTitle)
 // This box is built from code: no dialog template, no resource, and the text is
 // a wide literal in a UTF-8 source, which cannot be misread.
 //
-// It is also what a bare PECMD.EXE shows, which makes it the anchor the launch
-// smoke test uses: the process stays alive for as long as the box is on screen.
+// It is also what the reference shows when it is started with no arguments, and
+// the process stays alive for as long as the box is on screen.
 //
 // TaskDialog comes from comctl32 version 6, which the manifest selects. Nothing
 // links against comctl32, so it is fetched at run time and a system without v6

@@ -300,11 +300,11 @@ BOOL ParentProcessIsME(void)
 		_NumOf(ParentProcessName));
 
 	// "Ours" is this image's own module name: the product is phos.exe, and a
-	// second copy started by a script has to be recognised as ours. The two
-	// literal names that used to be listed here -- PECMD.EXE and PELOGON.EXE --
-	// are gone: the release image carries neither, so all they could still match
-	// was somebody else's file. Getting this wrong is silent rather than loud:
-	// it flips bRealBoot, which is what gates the shell registration in SHEL.
+	// second copy started by a script has to be recognised as ours. Two literal
+	// names used to be listed here instead, and they are gone: the release image
+	// carries neither, so all they could still match was somebody else's file.
+	// Getting this wrong is silent rather than loud: it flips bRealBoot, which
+	// is what gates the shell registration in SHEL.
 	tzSelfName[0] = 0;
 	if (GetModuleFileName(g_hInst, tzSelf, _NumOf(tzSelf)))
 	{
@@ -483,9 +483,9 @@ HRESULT SetLogoText(PCTSTR ptzText, DWORD dwColor, INT iLeft, INT iTop, INT iRig
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // The splash window's caption travels inside a hand-built DLGTEMPLATE, so each
-// string is a fixed-size array: the caption used to be "PECMD", exactly filling
-// six WCHARs. It carries our name now, and the array is sized from the literal
-// so the count cannot drift. The zero padding after it is unchanged.
+// string is a fixed-size array. The caption carries our name, and the array is
+// sized from the literal so the count cannot drift. The zero padding after it is
+// unchanged.
 const struct {DLGTEMPLATE dtDlg; WCHAR  wzMenu[1]; WCHAR wzClass[1]; WCHAR wzCaption[_NumOf(L"Phosphor")]; WORD wEnd[6];} c_dtLogo =
 {{WS_POPUP | WS_VISIBLE | DS_CENTER, WS_EX_LAYERED | WS_EX_TOOLWINDOW, 0, 0, 0, 400, 300}, 0, 0, L"Phosphor"};
 // LOGO <image>[,<background>] -- the splash.

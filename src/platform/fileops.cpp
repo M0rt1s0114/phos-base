@@ -1,14 +1,13 @@
 ﻿// The file, shortcut, process-ending and DLL capabilities, and their legacy
 // text front ends (FILE / LINK / SEND / KILL / SHUT / CALL).
 //
-// Written from the behaviour spec -- docs/COMMAND-MAP.md, the notes in
-// docs/COMPATIBILITY.md, and cases 006 / 011 / 012 / 029 / 039 / 041 -- rather
-// than from the reference implementation.
+// Written from the behaviour of the reference implementation as observed from
+// the outside, rather than from its source.
 //
 // Already ours before this slice, and deliberately left alone: FsDelete,
 // DirCreate, FsReadAll, FsWriteAll, FsRename, FsHardLink, FsTempDir,
-// CreateShortcut, KillProc and NativeCall were written in B0-2
-// (docs/B0-2-FIRST-SLICE.md); rewriting them again would only add risk.
+// CreateShortcut, KillProc and NativeCall were written first; rewriting them
+// again would only add risk.
 
 // A path that is about to be deleted is checked before anything touches it.
 //
@@ -639,8 +638,8 @@ BOOL IsLibraryPath(PCTSTR ptzLibrary)
 // current directory is the folder the running boot script was read from -- the
 // removable media the machine booted from. A planted copy of a DLL a boot
 // script names by bare name would otherwise be loaded with the boot driver's
-// rights (audit F-05). Written as a function because there is more than one
-// caller: NativeCall below and WIMGAPI in volume.cpp.
+// rights. Written as a function because there is more than one caller:
+// NativeCall below and WIMGAPI in volume.cpp.
 BOOL SystemLibraryPath(PCTSTR ptzLibrary, PTSTR ptzOut, UINT cchOut)
 {
 	if ((GetSystemDirectory(ptzOut, cchOut) == 0) ||
@@ -728,8 +727,8 @@ HRESULT WINAPI CallDll(PTSTR ptzCmd)
 	// each field after a following comma is an argument -- which is why the
 	// search starts at the name and not after it. Walking fields from the name
 	// instead made the name itself argument zero, and "CALL $gdi32.dll,EnableEUDC"
-	// then called a function that takes none with a string pointer; that is what
-	// took the boot chain down. Case 039 pins the shape.
+	// then called a function that takes none with a string pointer, which took
+	// the boot chain down.
 	UINT uArg = 0;
 	PVOID pvArg[4] = {0};
 	PTSTR ptzProc = UStrChr(ptzCmd, ',');
@@ -757,7 +756,7 @@ HRESULT WINAPI CallDll(PTSTR ptzCmd)
 		// What the reference reports here, and the trace records: a library
 		// that will not load is success, a missing export is the Win32 code.
 		// browseui.dll and shdocvw.dll have no DllInstall in this PE at all and
-		// the reference answers 127 for both. Case 039 pins it.
+		// the reference answers 127 for both.
 		return (hr == (HRESULT) ERROR_MOD_NOT_FOUND) ? S_OK : hr;
 	}
 	return (HRESULT) lResult;

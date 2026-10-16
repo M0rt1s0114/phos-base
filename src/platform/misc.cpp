@@ -51,9 +51,9 @@ HRESULT SetSystemShell(PCTSTR ptzShell)
 //
 // The answer is 0 whenever anything was looked at. The accumulator is the reason:
 // it starts at S_FALSE rather than at zero, and AddFontResource never subtracts,
-// so "found nothing to load" comes out as 0 as well. Case 051 pins the three
-// answers this shape produces -- a folder of real fonts, a folder that is not
-// there at all, and the drive-walking form -- as 0, 2 and 0.
+// so "found nothing to load" comes out as 0 as well. The three answers this
+// shape produces are 0, 2 and 0: a folder of real fonts, a folder that is not
+// there at all, and the drive-walking form.
 HRESULT RegFont(PTSTR tzPath)
 {
 	WIN32_FIND_DATA fd;
@@ -133,16 +133,15 @@ HRESULT SetWallpaper(PCTSTR ptzPath)
 // The legacy front end for this was "NUMK <0|1>". The capability is
 // `sys.numlock(on)`, which reads the keyboard and presses the key only when the
 // state differs -- pressing it when it is already right would flip it the other
-// way. Case 047 pins the answer.
+// way.
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // The registered owner, the organisation and the machine-wide Run key were
-// capabilities of their own for a while. SPEC-10 retired the verbs: each of them
-// is one `reg.set` on a key the caller can name (docs/SPEC-DECISIONS.md,
-// "准入判据"), so three functions and two verbs became the registry verb the
-// caller already had.
+// capabilities of their own for a while. They were retired: each of them is one
+// `reg.set` on a key the caller can name, so three functions and two verbs
+// became the registry verb the caller already had.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -192,10 +191,10 @@ static BOOL ManageDriver(HDEVINFO hDev, SP_DEVINFO_DATA& sDev, DWORD dwAction)
 // machine with no Ramdriv service -- this PE, for one -- answers "no" instead of
 // cycling a device class it knows nothing about.
 //
-// This is the one capability in this file whose working path the test rig cannot
-// reach (see D-SLICES.md), so what follows is a faithful re-expression rather
-// than a redesign: the only changes are the two places the reference could spin
-// without an exit, and both are marked.
+// The working path of this capability cannot be reached without a ramdisk
+// service to talk to, so what follows is a faithful re-expression rather than a
+// redesign: the only changes are the two places the reference could spin without
+// an exit, and both are marked.
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 #define RAMDISK_KEY   TEXT("System\\CurrentControlSet\\Services\\Ramdriv\\Parameters")
 #define RAMDISK_VALUE TEXT("DiskSize")
