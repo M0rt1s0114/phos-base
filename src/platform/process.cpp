@@ -208,21 +208,84 @@ VOID StartProgram(PCTSTR ptzCmd)
 	SetProcessWorkingSetSize(CurrentProcess, (SIZE_T) -1, (SIZE_T) -1);
 }
 
+// Turn the name a boot config gives for the shell into a path.
+//
+// CreateProcess searches the current directory first, and in a PE that is the
+// media the machine booted from -- so a bare "explorer.exe" could be answered by
+// a planted copy on a stick, running with the boot driver's rights. That is the
+// shape SystemLibraryPath closes for LoadLibrary, and the shell is a worse thing
+// to get wrong than a DLL. The same search is the other half of the problem: a
+// bare name only resolves at all when the directory the shell really lives in
+// happens to be on the search path, which is not something a boot config should
+// have to know.
+//
+// A name that already carries a path is used as it stands. A bare one is looked
+// for beside this executable -- the one directory --init already relies on --
+// then in System32, then in the Windows directory. FALSE means none of them has
+// it, and the caller starts nothing.
+template <size_t N>
+BOOL ResolveShellPath(PCTSTR ptzShell, TCHAR (&tzOut)[N])
+{
+	TCHAR tzDirs[3][MAX_PATH];
+	UINT uDirs = 0;
+	UINT i;
+
+	if (UStrChr(ptzShell, '\\') || UStrChr(ptzShell, ':'))
+	{
+		return UStrCopyTo(tzOut, ptzShell);
+	}
+
+	tzDirs[uDirs][0] = 0;
+	if (GetModuleFileName(g_hInst, tzDirs[uDirs], MAX_PATH))
+	{
+		PTSTR pSlash = UStrRChr(tzDirs[uDirs], '\\');
+
+		if (pSlash)
+		{
+			*pSlash = 0;
+			uDirs++;
+		}
+	}
+	if (GetSystemDirectory(tzDirs[uDirs], MAX_PATH))
+	{
+		uDirs++;
+	}
+	if (GetWindowsDirectory(tzDirs[uDirs], MAX_PATH))
+	{
+		uDirs++;
+	}
+
+	for (i = 0; i < uDirs; i++)
+	{
+		TCHAR tzTry[MAX_PATH];
+
+		if (UStrCopyTo(tzTry, tzDirs[i]) && UStrCatTo(tzTry, TEXT("\\")) &&
+			UStrCatTo(tzTry, ptzShell) && UFileExist(tzTry))
+		{
+			return UStrCopyTo(tzOut, tzTry);
+		}
+	}
+	return FALSE;
+}
+
 // Start the PE's shell and hand it to the tray.
 //
 // The old form spelled this "$<path>": start it, give it a moment, hook the
 // child, and tell the tray window to take the keyboard hook and put the icon up.
 // That whole sequence is this function now -- there is no modifier to spell and
 // no text to parse. The 1.5 seconds is the flat wait the text path had.
+//
+// The name goes through ResolveShellPath first, so what reaches CreateProcess is
+// a path and never a name it would search the current directory for.
 HRESULT StartShell(PCTSTR ptzShell)
 {
 	STARTUPINFO si = {0};
 	PROCESS_INFORMATION pi;
 	TCHAR tzCmd[MAX_STR];
 
-	if (!UStrCopyTo(tzCmd, ptzShell))
+	if (!ResolveShellPath(ptzShell, tzCmd))
 	{
-		return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+		return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
 	}
 
 	si.cb = sizeof(si);
