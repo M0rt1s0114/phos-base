@@ -56,7 +56,7 @@ Windows PE 的启动指挥程序：一个可执行文件，用于在 PE 启动�
 ## 运行环境与构建要求
 
 - **运行**：Windows 10 或更高版本内核的 Windows PE 镜像。程序调用的 Windows API 在 PE 环境中存在；它不面向完整的桌面系统安装。
-- **构建**：Visual Studio 2019 或 2022 的 C++ 工作负载（工具集 `v142`）与 Windows 10 SDK。无第三方库；使用的系统库为 `ShLwApi`、`Version`、`SetupAPI`。
+- **构建**：Visual Studio 2019 或 2022 的 C++ 工作负载（工具集 `v142`）与 Windows 10 SDK。无第三方库；除默认的之外，源码只链接 `ShLwApi` 与 `SetupAPI`。
 
 ## 安装
 
@@ -106,11 +106,11 @@ PE 没有控制台。轨迹通道会逐条写出命令及其结果：
 
 ## 仓库结构
 
-    src/app         入口、命令行、全局状态、资源、unity 包含文件
-    src/core        字符串、路径、编码、哈希、内存与磁盘查询
-    src/engine      脚本的加载、启动图，以及等待按键
+    src/app         入口、命令行、全局状态、资源、崩溃记录、unity 包含文件
+    src/core        字符串、路径、编码、内存与磁盘查询
+    src/engine      脚本的加载、启动图、轨迹通道
     src/commands    程序自己显示的对话框
-    src/platform    进程、注册表、卷、显示、托盘与窗口操作
+    src/platform    文件、进程、注册表、卷、显示、托盘与窗口操作
     src/lang        结构化脚本语言：词法、语法、解释器、库函数
 
 ## 不包含的内容

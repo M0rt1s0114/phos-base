@@ -57,7 +57,7 @@ Operations available to a boot configuration:
 ## Requirements
 
 - **To run:** a Windows PE image (Windows 10 or later based). The program calls Windows APIs that exist in the PE environment; it is not intended for a full desktop installation.
-- **To build:** Visual Studio 2019 or 2022 with the C++ workload (toolset `v142`) and a Windows 10 SDK. No third-party libraries; the system libraries used are `ShLwApi`, `Version` and `SetupAPI`.
+- **To build:** Visual Studio 2019 or 2022 with the C++ workload (toolset `v142`) and a Windows 10 SDK. No third-party libraries; beyond the default set the sources link only `ShLwApi` and `SetupAPI`.
 
 ## Install
 
@@ -107,11 +107,11 @@ The sources are compiled as one translation unit: `src/app/unity.cpp` includes t
 
 ## Repository layout
 
-    src/app         entry point, command line, global state, resources, the unity include
-    src/core        strings, paths, encoding, hashing, memory queries, disk queries
-    src/engine      loading a script, the splash image, and waiting for a key
+    src/app         entry point, command line, global state, resources, the crash recorder, the unity include
+    src/core        strings, paths, encoding, memory queries, disk queries
+    src/engine      loading a script, the splash image, the trace channel
     src/commands    the dialogs the program itself shows
-    src/platform    process, registry, volume, display, tray and window operations
+    src/platform    file, process, registry, volume, display, tray and window operations
     src/lang        the structured script language: lexer, parser, interpreter, library
 
 ## Not included
