@@ -31,7 +31,7 @@
 #define STR_Version			TEXT(_MakeVer(VER_Major, VER_Minor, VER_Release, VER_Build))
 // What the UI shows. A pre-release tag cannot live in four integers, so the
 // display string and the version resource stay separate on purpose.
-#define STR_VersionText			TEXT("0.2.0-beta")
+#define STR_VersionText			TEXT("0.2.0-beta2")
 #define STR_BuildStamp			TEXT(__DATE__) TEXT(" ") TEXT(__TIME__)
 #if defined(_M_X64)
 #define STR_Architecture		"amd64"
