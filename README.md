@@ -25,35 +25,32 @@ A startup commander for Windows PE: one executable that runs a boot configuratio
 
 ## Overview
 
-`phos.exe` runs a script while a Windows PE image boots. A script can be written in either of two forms:
-
-- **Command files** (`.ini`): one command per line. The command set is documented in this repository's Wiki (in progress).
-- **Structured scripts** (`.phos`, shebang `#!phos`): statements, blocks, functions, variables and error handling. Its library calls into the same operations as the commands.
-
-The two forms can be mixed: a structured script can run a command line, and a command file can load a structured script.
+`phos.exe` runs a script while a Windows PE image boots. A script is a structured
+script (`.phos`, shebang `#!phos`): statements and blocks, functions, variables and
+error handling, with a library that calls the operations a boot needs.
 
 Operations available to a boot configuration:
 
 | Area | Operations |
 |---|---|
 | Services | start, stop, query, create, delete |
-| Volumes | assign drive letters to volumes that have none; eject removable media and CD-ROMs |
+| Volumes | list volumes; assign drive letters to volumes that have none; eject removable media and CD-ROMs |
 | Images | mount a WIM image to a directory; unmount it; set the Ramdriv ramdisk size |
 | Recycle bin | set the capacity per volume |
-| Files | copy, delete, create directories, read, write, hard links, shortcuts, working directory |
-| Attributes | file attributes and timestamps |
+| Files | delete, create directories, read, write, append, edit a line, hard links, shortcuts, working directory |
+| Attributes | file attributes |
 | Registry | read, write and delete keys and values; load and unload offline hives |
-| Processes | run a program (hidden, on a chosen desktop, waiting or not); call a DLL entry point; send a message; wait; kill |
-| Environment | machine, user and process environment; PE variable scopes |
+| Processes | run a program (hidden, on a chosen desktop, waiting or not); call a DLL entry point; wait; kill |
+| Environment | machine, user and process environment |
 | Display | display mode, page file, write-filter cache size, NumLock |
 | Boot screen | splash image, splash text, wallpaper, fonts |
-| Shell | hand over to a shell and restart it if it exits; tray icon and menu; global hotkeys; keyboard hook |
-| Dialogs | message boxes; folder picker |
-| Text and numbers | substring, position, replace, size, name, extension, directory, dates, base64, hash |
+| Shell | hand over to a shell and restart it if it exits; tray icon and menu; global hotkeys; keyboard hook; taskbar pins; a folder option |
+| Text | substring, position, replace, field splitting, lines, path pieces and file names |
+| Time, hashes and numbers | current time, sleep, file digests, seeded random ranges and picks |
 
 ## Status
 
-- Version: `0.1.0-beta1`
+- Version: `0.2.0-alpha1`
 - Build targets: x64 and x86 (Win32).
 - Verification: the boot chain and a command test matrix are executed in a Windows PE image on VMware. That environment is not part of this repository.
 
@@ -80,17 +77,14 @@ Set the image's boot command:
 
 ### Script host
 
-    phos.exe LOAD  X:\Windows\System32\disposition\LoginUser.phos
-    phos.exe FILE  X:\temp\*.*
     phos.exe run   hello.phos
     phos.exe check hello.phos
     phos.exe version
 
-- `LOAD <file>` runs a file, in either form.
-- `<COMMAND> <arguments>` runs a single command.
-- `run <file>` executes a structured script.
+- `run <file>` executes a script.
 - `check <file> [report]` parses a script and writes the verdict to `report` (default: `<file>.check.txt`), without executing it.
-- `version` prints the version.
+- A known verb given the wrong number of arguments writes `phos-usage.txt` beside the program and exits 2. A word the program does not know is refused by name, with the reason in `init-error.txt`.
+- `version` writes the version to `phos-version.txt`, beside the program.
 
 Without arguments, `phos.exe` shows a dialog with the version and the project address.
 
@@ -115,8 +109,8 @@ The sources are compiled as one translation unit: `src/app/unity.cpp` includes t
 
     src/app         entry point, command line, global state, resources, the unity include
     src/core        strings, paths, encoding, hashing, memory queries, disk queries
-    src/engine      command dispatcher; parser of the command files
-    src/commands    command implementations
+    src/engine      loading a script, the splash image, and waiting for a key
+    src/commands    the dialogs the program itself shows
     src/platform    process, registry, volume, display, tray and window operations
     src/lang        the structured script language: lexer, parser, interpreter, library
 
