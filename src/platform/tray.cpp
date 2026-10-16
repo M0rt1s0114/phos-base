@@ -548,7 +548,7 @@ static VOID NotifyHotkeysChanged(void)
 	}
 }
 
-// Called by hotkey.bind. Answers false when every slot is taken: a binding that
+// Called by ui.hotkey. Answers false when every slot is taken: a binding that
 // silently vanished would be a key that does nothing and a script that has no
 // way to find out.
 bool AddHotkeyBinding(UINT uVk, UINT uMods, int line, const Lang::FuncPtr& fn,

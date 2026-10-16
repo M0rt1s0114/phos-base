@@ -205,10 +205,10 @@ HRESULT Main(CoreContext& ctx, PTSTR ptzCmd)
 	//
 	// Measured against the reference: it hands a script %Desktop% already
 	// expanded. On the official 240512 build the same is true only because that
-	// boot chain runs INIT (which is where this setup lives here), and the
-	// current HTBPE has no INIT anywhere - while Post\Link.ini is a pile of
-	// "LINK %Desktop%\..." lines. Without this they are written into a directory
-	// literally called "%Desktop%", and the command still reports success.
+	// boot chain runs INIT, which is where this setup lives there. A chain that
+	// does not is one whose "LINK %Desktop%\..." lines get written into a
+	// directory literally called "%Desktop%", with the command still reporting
+	// success.
 	{
 		TCHAR tzEnv[MAX_NAME];
 		tzEnv[0] = 0;

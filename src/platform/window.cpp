@@ -380,7 +380,7 @@ void DisplayAppDesc(void)
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// The splash-text capability. Text() below is the legacy text front end.
+// The splash-text capability.
 //
 // A setting the caller does not name is left alone, which is how the legacy
 // parser behaves: every TEXT call reuses whatever the previous one left behind.

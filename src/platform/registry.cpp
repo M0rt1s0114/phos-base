@@ -2,10 +2,9 @@
 // The registry capabilities
 //
 // These are the operations themselves: a root key, a subkey, a value name and
-// typed data. Regi() below is the legacy text front end for the same
-// operations, and the language's reg.* verbs call these directly -- before
-// this, the language built "REGI HKLM\...\name=data" strings and handed them
-// back to the parser it is supposed to stop depending on.
+// typed data. The language's reg.* verbs call these directly -- before this, the
+// language built "REGI HKLM\...\name=data" strings and handed them back to the
+// parser it is supposed to stop depending on.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 HKEY RegRootFromName(PCTSTR ptzName)
 {

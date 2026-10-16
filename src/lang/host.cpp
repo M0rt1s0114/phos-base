@@ -2837,7 +2837,7 @@ namespace Lang
 
 		// str.lines(s) -- split on line breaks, as a list.
 		//
-		// This is what fs.lines was for, minus the file: the caller reads one
+		// Splitting and reading stay separate: the caller reads the file
 		// (fs.read) and splits it here, which is the same pair every other
 		// reader wants -- and it keeps the file-reading verb from owning a
 		// text-shape decision. A trailing break ends the last line rather than

@@ -315,7 +315,7 @@ HRESULT CleanTempFolder(VOID)
 // are here instead, behind a menu click, which is what "a person is at the
 // machine" means -- so these two ask before they act. The "@" form that answered
 // the confirmation on the caller's behalf retires with the dialect: a script that
-// wants the folder emptied without a question calls fs.temp_clean().
+// wants the folder emptied without a question calls fs.clean_temp().
 
 // Report where the folder is, then ask before emptying it. The answer is what
 // CleanTempFolder answered, or S_FALSE when the person said no or nothing is

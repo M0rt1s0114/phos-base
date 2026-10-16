@@ -139,8 +139,9 @@ HRESULT ApplyDisplayMode(DWORD uWidth, DWORD uHeight, DWORD uBits, DWORD uHz)
 // The caller names the drive it would rather use. The two answers come back
 // through one array rather than a struct: slot 0 is the last removable volume
 // with room, slot 1 the last fixed one, and the return value says whether a
-// fixed volume at or after the preferred letter was found. Page() below indexes
-// that array with this answer, which is why the slots sit where they do.
+// fixed volume at or after the preferred letter was found. The page-file code
+// below indexes that array with this answer, which is why the slots sit where
+// they do.
 // The drive a page file may go on: the first partition at or after StartDrive with
 // room for it. A removable drive with room, if one turns up first, is remembered
 // in ptzDrive[0]; a fixed one goes in ptzDrive[1] -- so the caller can tell a
@@ -163,7 +164,7 @@ HRESULT CreatePageFileAt(PCTSTR ptzPath, DWORD uMin, DWORD uMax);
 // then the file is created and recorded in one step, because a page file Windows
 // does not know about is not one it will use.
 
-// The page-file capability. Page() above is the legacy text front end.
+// The page-file capability.
 //
 // It makes the file through ntdll and records it where Windows looks for page
 // files, both in one step: a page file nobody recorded is not one the system
@@ -311,7 +312,7 @@ static BOOL ServWaitForState(SC_HANDLE hService, DWORD dwWanted)
 	}
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
-// The service capability. Serv() below is the legacy text front end for it.
+// The service capability.
 //
 // bWait is the part that matters: "net start", which the boot chain used to
 // run, returns once the service is RUNNING. Starting without waiting is a
@@ -477,12 +478,12 @@ HRESULT SetServiceState(PCTSTR ptzName, BOOL bStop, BOOL bWait)
 /////////////////////////////////////////////////////////////////////////////
 // The FBWF cache size, from values rather than from the "P20 L32 H64" text:
 // a percentage of free memory, kept between the minimum and the maximum. A
-// percentage of 0 means "no percentage term at all" -- GetNewSize() below maps
-// the legacy "P0" onto 1 before it gets here, because that is what the
-// reference does with a percentage below one.
+// percentage of 0 means "no percentage term at all" -- the caller maps the
+// legacy "P0" onto 1 before it gets here, because that is what the reference
+// does with a percentage below one.
 //
-// GetNewSize() and Fbwf()/SetFbwfCache() all end up here, so the arithmetic
-// that decides how much write-filter cache a machine gets exists once.
+// Every way in ends up here, so the arithmetic that decides how much
+// write-filter cache a machine gets exists once.
 // 0 at either end means the caller did not ask for that end, so it is passed
 // through instead of being pulled up to MIN.
 static DWORD ClampToRange(DWORD dwValue, DWORD MIN, DWORD MAX)

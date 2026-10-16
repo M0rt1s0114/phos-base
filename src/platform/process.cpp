@@ -176,7 +176,7 @@ static HHOOK ReadHookHandle(VOID)
 //
 // What used to be here was the text EXEC: its modifier run ('!', '@', '=', '$',
 // '&'), its "-hide" and "-wd:" options, and a branch that wrote a command line
-// into the Run key instead of running it. `proc.run` and `boot.add_run` own those
+// into the Run key instead of running it. `proc.run` and `reg.set` own those
 // jobs in the language now, so what is left is the launch itself.
 //
 // The command line goes to CreateProcess as it stands: a quoted

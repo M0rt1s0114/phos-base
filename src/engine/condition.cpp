@@ -1,14 +1,12 @@
-﻿// Wait for a key and report which one -- what WAIT with no time is built on.
-//
-// A key code that is a letter or a digit also lands in PessKey= for a script to
-// read. The update is rate-limited: a key is only accepted when a second has gone
-// by since the last one, which is what keeps a held key from filling the queue.
+﻿/////////////////////////////////////////////////////////////////////////////
+// The splash image, the error value a script reads back, and the trace channel:
+// the three things a boot chain needs before it can say anything for itself.
 /////////////////////////////////////////////////////////////////////////////
 
 
 /////////////////////////////////////////////////////////////////////////////
-// The splash-image capability. Logo() below is the legacy text front end for it
-// -- and for boot.clear(), which is the same operation with no image named.
+// The splash-image capability: `ui.splash` names an image, `ui.splash_clear` is
+// the same operation with none.
 HRESULT ShowLogo(PCTSTR ptzImage)
 {
 	if ((ptzImage != NULL) && (ptzImage[0] != 0))

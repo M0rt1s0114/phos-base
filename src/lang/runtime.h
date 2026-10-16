@@ -1,9 +1,9 @@
 ﻿//////////////////////////////////////////////////////////////////////////////////////////////////
 // Phosphor - the structured script front end.
 //
-// A tree walking interpreter, deliberately small: it exists so the real HTBPE
-// boot chain can be written in one language instead of a command dialect, cmd
-// and Lua, not so that every design decision in the language is finished.
+// A tree walking interpreter, deliberately small: it exists so a real PE boot
+// chain can be written in one language instead of a command dialect, cmd and
+// Lua, not so that every design decision in the language is finished.
 //
 // Two things are on purpose:
 //   * values have value semantics, implemented with copy-on-write: a container
