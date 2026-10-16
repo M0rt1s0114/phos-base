@@ -50,7 +50,7 @@ Operations available to a boot configuration:
 
 ## Status
 
-- Version: `0.2.0-alpha1`
+- Version: `0.2.0-beta`
 - Build targets: x64 and x86 (Win32).
 - Verification: the boot chain and a command test matrix are executed in a Windows PE image on VMware. That environment is not part of this repository.
 
@@ -123,7 +123,7 @@ The sources are compiled as one translation unit: `src/app/unity.cpp` includes t
 
 ## Contributing
 
-Bug reports and pull requests are handled in this repository's issue tracker. The command set and the script syntax are stabilising rather than frozen: additions are accepted, and a change that would alter the result of an existing command file or script is made only when the present behaviour is a defect.
+Bug reports and pull requests are handled in this repository's issue tracker. The command set and the script syntax are stabilising rather than frozen: additions are accepted, and a change that would alter the result of an existing script is made only when the present behaviour is a defect.
 
 ## Acknowledgements
 
