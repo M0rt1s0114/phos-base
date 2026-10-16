@@ -1,5 +1,4 @@
-﻿// The file, shortcut, process-ending and DLL capabilities, and their legacy
-// text front ends (FILE / LINK / SEND / KILL / SHUT / CALL).
+﻿// The file, shortcut, process-ending and DLL capabilities.
 //
 // Written from the behaviour of the reference implementation as observed from
 // the outside, rather than from its source.
@@ -86,9 +85,8 @@ HRESULT ValidateDestructivePath(PCTSTR ptzPath)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // The file capabilities
 //
-// The operations themselves. File() above is the legacy text front end for the
-// same two things (delete, and copy/move through its "=>" / "->" syntax); the
-// language's fs.* verbs call these instead of building "FILE ..." strings.
+// The operations themselves: delete, and copy/move. The language's fs.* verbs
+// call these instead of building command strings.
 //////////////////////////////////////////////////////////////////////////////////////////////////
 HRESULT FsDelete(PCTSTR ptzPath)
 {
@@ -330,7 +328,8 @@ HRESULT FsTempDir(PTSTR ptzBuf, DWORD cchBuf)
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // Create shortcut
-// The shortcut capability. Link() below is the legacy text front end for it.
+//
+// The shortcut capability.
 //
 // The legacy form packs everything into one comma-separated string and mutates
 // it in place; the structured form takes the pieces as arguments, which is the
@@ -715,52 +714,6 @@ HRESULT NativeCall(PCTSTR ptzLibrary, PCTSTR ptzProc, PVOID *ppvArgs, UINT uArgs
 	return S_OK;
 }
 
-// The legacy text front end. The field after the library is the *function
-// name*, and each field after a following comma is an argument - which is why
-// the search starts at the name and not after it: the first comma it finds is
-// the one that ends the name. Walking fields from the name instead made the
-// name itself argument zero, and "CALL $gdi32.dll,EnableEUDC" then called
-// EnableEUDC with a string pointer; that is what took the boot chain down.
-HRESULT WINAPI CallDll(PTSTR ptzCmd)
-{
-	// "dll[,function][,arg]*". The field after the library is the *name*, and
-	// each field after a following comma is an argument -- which is why the
-	// search starts at the name and not after it. Walking fields from the name
-	// instead made the name itself argument zero, and "CALL $gdi32.dll,EnableEUDC"
-	// then called a function that takes none with a string pointer, which took
-	// the boot chain down.
-	UINT uArg = 0;
-	PVOID pvArg[4] = {0};
-	PTSTR ptzProc = UStrChr(ptzCmd, ',');
-	LONG lResult = 0;
-	HRESULT hr;
-
-	if (ptzProc)
-	{
-		*ptzProc++ = 0;
-		for (PTSTR p = ptzProc; (uArg < _NumOf(pvArg)) && (p = UStrChr(p, ',')); uArg++)
-		{
-			*p++ = 0;
-			pvArg[uArg] = (PVOID) p;
-			if (*p == '#')
-			{
-				// "#7" is the integer 7, not a pointer to the text.
-				pvArg[uArg] = (PVOID)(INT_PTR) UStrToInt(p + 1);
-			}
-		}
-	}
-
-	hr = NativeCall(ptzCmd, ptzProc, pvArg, uArg, &lResult);
-	if (hr != S_OK)
-	{
-		// What the reference reports here, and the trace records: a library
-		// that will not load is success, a missing export is the Win32 code.
-		// browseui.dll and shdocvw.dll have no DllInstall in this PE at all and
-		// the reference answers 127 for both.
-		return (hr == (HRESULT) ERROR_MOD_NOT_FOUND) ? S_OK : hr;
-	}
-	return (HRESULT) lResult;
-}
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 
