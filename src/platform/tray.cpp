@@ -499,14 +499,26 @@ HRESULT MainThread(void)
 		SendMessage(MainWindowHwnd, FindShellMsg, 0, 0);
 	}
 
-	// The shell is expected to stay up from here; if it goes away again, start it
-	// again.
-	while (MyShell[0] && !FindProc(ptzShellName))
+	// The shell is expected to stay up, so this watches it for the rest of the
+	// process's life and starts it again whenever it is not there.
+	//
+	// The shape matters and this one was wrong: the loop used to read
+	// `while (MyShell[0] && !FindProc(...))`, which runs *while the shell is
+	// absent* and therefore stops the moment the shell is seen once. It could
+	// never see the shell go away, so "start it again if it exits" was never
+	// implemented -- and a shell that came up and then died left the machine with
+	// no desktop and no explanation. The tray's own "restart explorer" hotkey
+	// depends on the opposite: it kills the shell and expects this loop to put it
+	// back.
+	while (MyShell[0])
 	{
-		StartShell(MyShell);
+		if (!FindProc(ptzShellName))
+		{
+			StartShell(MyShell);
+		}
 		Sleep(200);
 	}
-	ThreadMark(TEXT("done: loop left, no more shell watching"));
+	ThreadMark(TEXT("done: the shell registration was withdrawn"));
 	return S_OK;
 }
 //////////////////////////////////////////////////////////////////////////////////////////
