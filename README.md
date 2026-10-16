@@ -50,7 +50,7 @@ Operations available to a boot configuration:
 
 ## Status
 
-- Version: `0.2.0-beta`
+- Version: `0.2.0-beta2`
 - Build targets: x64 and x86 (Win32).
 - Verification: the boot chain and a command test matrix are executed in a Windows PE image on VMware. That environment is not part of this repository.
 
